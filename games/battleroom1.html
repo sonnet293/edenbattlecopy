@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="../css/battleroom1.css">
+    <title>철거 예정 구역의 빈 골목</title>
+</head>
+<body>
+    
+    <div class="battle-wrap">
+ 
+  <div class="pokemon-panel opponent">
+    <div class="panel-header">
+      <span class="name" id="p2-name">Player2</span>
+      <span class="hp-text" id="p2-hp">-</span>
+    </div>
+    <div class="hp-bar-bg"><div class="hp-bar" id="p2-hp-bar"></div></div>
+    <div class="stats" id="p2-stats"></div>
+  </div>
+ 
+  <div class="pokemon-panel mine">
+    <div class="panel-header">
+      <span class="name" id="p1-name">Player1</span>
+      <span class="hp-text" id="p1-hp">-</span>
+    </div>
+    <div class="hp-bar-bg"><div class="hp-bar" id="p1-hp-bar"></div></div>
+    <div class="stats" id="p1-stats"></div>
+  </div>
+ 
+  <div class="dice-row" id="diceRow">
+    <div class="dice-box">
+      <span class="dice-name" id="dice-p1-name">Player1</span>
+      <div class="dice-number" id="dice-p1">-</div>
+    </div>
+    <span class="dice-vs">VS</span>
+    <div class="dice-box">
+      <span class="dice-name" id="dice-p2-name">Player2</span>
+      <div class="dice-number" id="dice-p2">-</div>
+    </div>
+  </div>
+ 
+  <div class="turn-indicator" id="turn-indicator"></div>
+ 
+  <div class="result" id="result"></div>
+ 
+  <div class="move-grid">
+    <button class="move-btn" id="moveBtn0" style="display:none;"></button>
+    <button class="move-btn" id="moveBtn1" style="display:none;"></button>
+    <button class="move-btn" id="moveBtn2" style="display:none;"></button>
+    <button class="move-btn" id="moveBtn3" style="display:none;"></button>
+  </div>
+ 
+  <div id="battle-log"></div>
+ 
+  <div class="chat-section" id="spectator-chat-section" style="display:none;">
+    <div class="chat-title">관전자 채팅</div>
+    <div class="chat-messages" id="spectator-chat-messages"></div>
+    <div class="chat-input-row">
+      <input type="text" id="spectator-chat-input" placeholder="메시지를 입력하세요" />
+      <button id="spectator-chat-send-btn">전송</button>
+    </div>
+  </div>
+ 
+</div>
+
+    <script>
+        const ROOM_ID = "battleroom1";
+    </script>
+    <script type="module" src="../js/battle.js"></script>
+    <script type="module" src="../js/chat.js"></script>
+</body>
+</html>

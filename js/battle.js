@@ -88,6 +88,22 @@ function defaultRanks() {
   };
 }
 
+function updatePortrait(prefix, pokemon, animate = false) {
+  const img = document.getElementById(`${prefix}-portrait`)
+  const placeholder = document.getElementById(`${prefix}-portrait-placeholder`)
+  if (!img) return
+  if (!pokemon?.portrait) {
+    img.classList.remove("visible"); img.style.display = "none"
+    if (placeholder) placeholder.style.display = "block"; return
+  }
+  if (placeholder) placeholder.style.display = "none"
+  img.classList.remove("visible", "slide-in-my", "slide-in-enemy")
+  img.style.display = "block"; img.src = pokemon.portrait; img.alt = pokemon.name
+  setTimeout(() => {
+    img.classList.add("visible", ...(animate ? [prefix === "my" ? "slide-in-my" : "slide-in-enemy"] : []))
+  }, 80)
+}
+
 // 3턴(사용 시점 포함) 지나면 자동으로 0으로 풀림
 function getEffectiveRank(ranks, stat, currentTurn) {
   const data = ranks?.[stat];
@@ -508,6 +524,9 @@ function renderBoard(room) {
 
   renderPokemon("p1", room.p1_entry, room.p1_active_idx ?? 0);
   renderPokemon("p2", room.p2_entry, room.p2_active_idx ?? 0);
+
+  updatePortrait("my", room.p1_entry?.[room.p1_active_idx ?? 0]);
+  updatePortrait("enemy", room.p2_entry?.[room.p2_active_idx ?? 0]);
 
   renderLog(room.battle_log);
   renderResult(room);

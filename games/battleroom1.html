@@ -13,38 +13,44 @@
     <div class="pokemon-pannel opponent">
       <div class="portrait-placeholder" id="enemy-portrait-placeholder"></div>
       <img id="enemy-portrait" class="portrait-img">
-      <span class="name" id="p2-name">Player2</span>
-      <span class="hp-text" id="p2-hp">-</span>
+      <span class="name" id="enemy-name">적군</span>
+      <span class="hp-text" id="enemy-hp">-</span>
       <div class="hp-bar-bg">
-        <div class="hp-bar" id="p2-hp-bar"></div>
+        <div class="hp-bar" id="enemy-hp-bar"></div>
       </div>
-      <div class="stats" id="p2-stats"></div>
+      <div class="stats" id="enemy-stats"></div>
+      <div class="bench-list" id="enemy-bench"></div>
     </div>
   </div>
 
   <!--아군 섹션-->
   <div class="pokemon-panel mine">
       <div class="portrait-wrap">
-  
-        <div class="portrait-placeholder" id="my-portrait-placeholder"></div>
-        
-        <img id="my-portrait" class="portrait-img" alt="" />
+
+        <div class="portrait-placeholder" id="mine-portrait-placeholder"></div>
+
+        <img id="mine-portrait" class="portrait-img" alt="" />
       </div>
       <div class="panel-header">
-        <span class="name" id="p1-name">Player1</span>
-        <span class="hp-text" id="p1-hp">-</span>
+        <span class="name" id="mine-name">아군</span>
+        <span class="hp-text" id="mine-hp">-</span>
       </div>
       <div class="hp-bar-bg">
-        <div class="hp-bar" id="p1-hp-bar"></div>
+        <div class="hp-bar" id="mine-hp-bar"></div>
       </div>
-      <div class="stats" id="p1-stats"></div>
+      <div class="stats" id="mine-stats"></div>
+
+      <div class="switch-section">
+        <button type="button" id="switch-toggle-btn" class="switch-btn" style="display:none;">포켓몬 교체</button>
+        <div class="bench-list" id="mine-bench" style="display:none;"></div>
+      </div>
     </div>
 
   <div class="dice-row" id="diceRow">
-    <div class="dice-name" id="dice-p1-name">Player1</div>
-    <div class="dice-number" id="dice-p1">-</div>
-    <div class="dice-name" id="dice-p2-name">Player2</div>
-    <div class="dice-number" id="dice-p2">-</div>
+    <div class="dice-name" id="dice-mine-name">아군</div>
+    <div class="dice-number" id="dice-mine">-</div>
+    <div class="dice-name" id="dice-enemy-name">적군</div>
+    <div class="dice-number" id="dice-enemy">-</div>
   </div>
 
   <div class="turn-indicator" id="turn-indicator"></div>

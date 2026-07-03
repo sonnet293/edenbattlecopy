@@ -47,6 +47,8 @@ let lastAnimatedRound = 0; // 마지막으로 다이스 애니메이션 재생�
 let isAnimating = false; // 다이스 애니메이션 재생 중인지
 let resolvedForcedTurn = 0; // 얼음/마비/혼란 등 강제행동 체크를 끝낸 round_no
 let forcedActionPending = false; // 강제행동 체크 처리 중인지 (버튼 잠금용)
+let switchPanelOpen = false; // 자발적 교체 패널(내 벤치 목록) 토글 상태
+let lastRoomSnapshot = null; // 교체 버튼 클릭 시 즉시 재렌더링하기 위한 마지막 룸 스냅샷
 
 const DICE_SOUND_URL = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3";
 const diceSound = new Audio(DICE_SOUND_URL);
@@ -59,6 +61,15 @@ function slotKey(slot) {
 
 function displayName(key, room) {
   return key === "p1" ? (room.player1_name ?? "Player1") : (room.player2_name ?? "Player2");
+}
+
+// 화면에 항상 "아군(mine)/적군(enemy)"으로 보이도록, 접속한 사람 기준으로 p1/p2를 매핑.
+// player1로 접속한 사람도, player2로 접속한 사람도 각자 자기 쪽을 "mine"으로 보게 됨.
+// 관전자는 편의상 p1을 mine으로 고정.
+function perspectiveKeys() {
+  const myKey = slotKey(mySlot);
+  if (myKey === "p2") return { mineKey: "p2", enemyKey: "p1" };
+  return { mineKey: "p1", enemyKey: "p2" };
 }
 
 function calcMySlot(room) {
@@ -239,6 +250,7 @@ function listenBattle() {
     if (!room) return;
 
     mySlot = isSpectatorView ? "spectator" : calcMySlot(room);
+    lastRoomSnapshot = room;
 
     renderBoard(room);
     maybeInitRound(room);
@@ -250,7 +262,8 @@ function listenBattle() {
       isAnimating = true;
       document.getElementById("turn-indicator").innerText = "주사위 굴리는 중...";
       renderTurnUI(room); // 버튼들 잠그기
-      playDiceRoll(room.p1_roll, room.p2_roll).then(() => {
+      const { mineKey, enemyKey } = perspectiveKeys();
+      playDiceRoll(room[`${mineKey}_roll`], room[`${enemyKey}_roll`]).then(() => {
         isAnimating = false;
         lastAnimatedRound = roundNo;
         afterDiceSettled(room);
@@ -602,13 +615,19 @@ async function switchPokemon(targetIdx) {
 }
 
 function renderBoard(room) {
-  document.getElementById("p1-name").innerText = room.player1_name ?? "Player1";
-  document.getElementById("p2-name").innerText = room.player2_name ?? "Player2";
-  document.getElementById("dice-p1-name").innerText = room.player1_name ?? "Player1";
-  document.getElementById("dice-p2-name").innerText = room.player2_name ?? "Player2";
+  const { mineKey, enemyKey } = perspectiveKeys();
+  const myKey = slotKey(mySlot);
 
-  renderPokemon("p1", room.p1_entry, room.p1_active_idx ?? 0);
-  renderPokemon("p2", room.p2_entry, room.p2_active_idx ?? 0);
+  const mineLabel = myKey ? `아군 (${displayName(mineKey, room)})` : displayName(mineKey, room);
+  const enemyLabel = myKey ? `적군 (${displayName(enemyKey, room)})` : displayName(enemyKey, room);
+
+  document.getElementById("mine-name").innerText = mineLabel;
+  document.getElementById("enemy-name").innerText = enemyLabel;
+  document.getElementById("dice-mine-name").innerText = mineLabel;
+  document.getElementById("dice-enemy-name").innerText = enemyLabel;
+
+  renderPokemon("mine", room[`${mineKey}_entry`], room[`${mineKey}_active_idx`] ?? 0);
+  renderPokemon("enemy", room[`${enemyKey}_entry`], room[`${enemyKey}_active_idx`] ?? 0);
 
   renderLog(room.battle_log);
   renderResult(room);
@@ -696,33 +715,37 @@ function renderMoveButtons(room) {
 }
 
 // 양쪽 벤치를 렌더링. 클릭 가능한 건 "내 쪽"이고, 교체 대기 중이거나(강제) 내 차례에 자발적 교체가 가능할 때만.
+// dataKey(p1/p2)는 room 문서에서 데이터를 읽는 키, uiKey(mine/enemy)는 화면에 표시되는 위치.
 function renderBench(room) {
-  renderBenchSide("p1", room);
-  renderBenchSide("p2", room);
+  const { mineKey, enemyKey } = perspectiveKeys();
+  renderBenchSide(mineKey, "mine", room);
+  renderBenchSide(enemyKey, "enemy", room);
 }
 
-function renderBenchSide(key, room) {
-  const container = document.getElementById(`${key}-bench`);
+function renderBenchSide(dataKey, uiKey, room) {
+  const container = document.getElementById(`${uiKey}-bench`);
   if (!container) return;
 
-  const entry = room[`${key}_entry`] ?? [];
-  const activeIdx = room[`${key}_active_idx`] ?? 0;
+  const entry = room[`${dataKey}_entry`] ?? [];
+  const activeIdx = room[`${dataKey}_active_idx`] ?? 0;
   const myKey = slotKey(mySlot);
-  const pendingSwitch = !!room[`${key}_pending_switch`];
+  const pendingSwitch = !!room[`${dataKey}_pending_switch`];
   const anyonePending = !!room.p1_pending_switch || !!room.p2_pending_switch;
 
-  const canForcedSwitch = myKey === key && pendingSwitch;
+  const canForcedSwitch = myKey === dataKey && pendingSwitch;
   const canVoluntarySwitch =
-    myKey === key &&
+    myKey === dataKey &&
     !pendingSwitch &&
     !anyonePending &&
     !room.battle_winner &&
     !isAnimating &&
     !forcedActionPending &&
-    room.battle_turn === key &&
+    room.battle_turn === dataKey &&
     room.round_no === resolvedForcedTurn;
 
   container.innerHTML = "";
+  container.style.flexWrap = "wrap";
+  container.style.gap = "6px";
 
   entry.forEach((pkmn, idx) => {
     if (!pkmn) return;
@@ -760,6 +783,34 @@ function renderBenchSide(key, room) {
     btn.onclick = () => switchPokemon(idx);
     container.appendChild(btn);
   });
+
+  // "내 쪽" 벤치만 교체 버튼으로 열고 닫는다. 적 쪽은 그냥 로스터 확인용(항상 표시, 클릭 불가).
+  if (uiKey !== "mine") {
+    container.style.display = "flex";
+    return;
+  }
+
+  const toggleBtn = document.getElementById("switch-toggle-btn");
+  if (!toggleBtn) return;
+
+  if (canForcedSwitch) {
+    // 쓰러져서 강제로 교체해야 하는 상태: 토글 없이 목록을 바로 보여줌
+    toggleBtn.style.display = "none";
+    container.style.display = "flex";
+  } else if (canVoluntarySwitch) {
+    toggleBtn.style.display = "inline-block";
+    toggleBtn.disabled = false;
+    toggleBtn.textContent = switchPanelOpen ? "교체 취소" : "포켓몬 교체";
+    toggleBtn.onclick = () => {
+      switchPanelOpen = !switchPanelOpen;
+      if (lastRoomSnapshot) renderBench(lastRoomSnapshot);
+    };
+    container.style.display = switchPanelOpen ? "flex" : "none";
+  } else {
+    toggleBtn.style.display = "none";
+    container.style.display = "none";
+    switchPanelOpen = false;
+  }
 }
 
 function renderLog(log = []) {
@@ -838,16 +889,16 @@ function animateOneDice(elId, finalValue) {
   });
 }
 
-// 양쪽 주사위를 동시에 굴려서 실제 저장된 값(p1Roll, p2Roll)으로 착지시킴
-async function playDiceRoll(p1Roll, p2Roll) {
+// 양쪽 주사위를 동시에 굴려서 실제 저장된 값(mineRoll, enemyRoll)으로 착지시킴
+async function playDiceRoll(mineRoll, enemyRoll) {
   const diceRow = document.getElementById("diceRow");
   diceRow.style.display = "flex";
-  document.getElementById("dice-p1").textContent = "-";
-  document.getElementById("dice-p2").textContent = "-";
+  document.getElementById("dice-mine").textContent = "-";
+  document.getElementById("dice-enemy").textContent = "-";
 
   await Promise.all([
-    animateOneDice("dice-p1", p1Roll),
-    animateOneDice("dice-p2", p2Roll),
+    animateOneDice("dice-mine", mineRoll),
+    animateOneDice("dice-enemy", enemyRoll),
   ]);
 
   diceSound.currentTime = 0;

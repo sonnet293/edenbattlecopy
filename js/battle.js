@@ -51,6 +51,14 @@ let forcedActionPending = false; // 강제행동 체크 처리 중인지 (버튼
 const DICE_SOUND_URL = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3";
 const diceSound = new Audio(DICE_SOUND_URL);
 
+const BUTTON_SOUND_URL = "https://usual-salmon-mnqxptwyvw.edgeone.app/Pokemon%20(A%20Button)%20-%20Sound%20Effect%20(HD)%20(1)%20(1).mp3";
+const buttonSound = new Audio(BUTTON_SOUND_URL);
+
+function playButtonSound() {
+  buttonSound.currentTime = 0;
+  buttonSound.play().catch(() => {});
+}
+
 function slotKey(slot) {
   if (slot === "player1") return "p1";
   if (slot === "player2") return "p2";
@@ -707,7 +715,10 @@ function renderMoveButtons(room) {
     btn.style.opacity = usable ? "1" : "0.45";
     btn.textContent = `${move.name} (PP ${move.pp})`;
     btn.disabled = !usable;
-    btn.onclick = () => useMove(i);
+    btn.onclick = () => {
+      playButtonSound();
+      useMove(i);
+    };
   }
 }
 
@@ -777,7 +788,10 @@ function renderBenchSide(dataKey, uiKey, room) {
     label.textContent = `${formatPokemonName(pkmn)} (${pkmn.hp}/${pkmn.maxHp})${isActive ? " - 출전 중" : ""}`;
     btn.appendChild(label);
 
-    btn.onclick = () => switchPokemon(idx);
+    btn.onclick = () => {
+      playButtonSound();
+      switchPokemon(idx);
+    };
     container.appendChild(btn);
   });
 

@@ -10,7 +10,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // 기대하는 모양:
-//   MOVES["화염바퀴"] = { power, type, accuracy, alwaysHit, effect: { chance, status?, volatile?, rank? } }
+//   MOVES["화염바퀴"] = { power, type, accuracy, alwaysHit, effect: { chance, status?, volatile? },
+//                        rank?: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? } }
 import { MOVES } from "./moves.js";
 // 기대하는 모양: getTypeMultiplier(moveType, defenderType) -> 1.2 / 0.8 / 0 / 1
 import { getTypeMultiplier } from "./typeChart.js";
@@ -101,9 +102,19 @@ function defaultRanks() {
   return {
     atk: { value: 0, expireTurn: 0 },
     def: { value: 0, expireTurn: 0 },
-    evasion: { value: 0, expireTurn: 0 },
+    evasion: { value: 0, expireTurn: 0 }, // 속도(spd) 랭크는 회피율 보정으로만 쓰이므로 evasion 버킷에 저장
   };
 }
+
+// moves.js의 rank 필드(atk/def/spd/targetAtk/targetDef/targetSpd) -> 내부 랭크 버킷/대상 매핑
+const RANK_FIELD_MAP = {
+  atk: { self: true, stat: "atk" },
+  def: { self: true, stat: "def" },
+  spd: { self: true, stat: "evasion" },
+  targetAtk: { self: false, stat: "atk" },
+  targetDef: { self: false, stat: "def" },
+  targetSpd: { self: false, stat: "evasion" },
+};
 
 // 3턴(사용 시점 포함) 지나면 자동으로 0으로 풀림.
 // 갱신(재사용) 시에는 호출하는 쪽에서 expireTurn을 currentTurn+2로 다시 찍어서 3턴을 새로 시작시킴.
@@ -456,17 +467,18 @@ async function useMove(moveIdx) {
   if (!hit) {
     log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! 빗나갔다...`);
   } else {
-    // 보정 공격력 = 공격 x 공격 랭크 보정 / 보정 방어력 = 방어 x 방어 랭크 보정
+    // 공격 랭크업/다운: 타입 상성 적용 "이전" 보정값으로, 1d10 굴림에만 곱해짐 (급소율에는 영향 없음)
+    // 방어 랭크업/다운: 최종 피해량 계산 이후 보정값으로, 방어력x3 항에만 곱해짐
     const atkMult = rankMultiplier(getEffectiveRank(myRanks, "atk", currentTurn));
     const defMult = rankMultiplier(getEffectiveRank(oppRanks, "def", currentTurn));
-    const correctedAtk = attacker.atk * atkMult;
-    const correctedDef = defender.def * defMult;
 
     const typeMult = getDefenderTypeMultiplier(moveData.type, defender.types);
     const stab = hasStab(attacker.types, moveData.type) ? 1.3 : 1;
 
-    // 최종 피해량 = ((위력 + 보정공격력x4 + 1d10) x 타입상성 x 자속) - 보정방어력x3
-    const rawDamage = (moveData.power + correctedAtk * 4 + rollD10()) * typeMult * stab - correctedDef * 3;
+    // 최종 피해량 = ((위력 + 공격력x4 + 1d10 x 공격랭크보정) x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
+    const rawDamage =
+      (moveData.power + attacker.atk * 4 + rollD10() * atkMult) * typeMult * stab -
+      defender.def * 3 * defMult;
     const dmg = Math.max(0, Math.round(rawDamage));
     const newHp = Math.max(0, defender.hp - dmg);
 
@@ -499,17 +511,25 @@ async function useMove(moveIdx) {
 
     entries[oppKey][activeIdx[oppKey]] = updatedDefender;
 
-    // 랭크 변화. 갱신 시점부터 다시 3턴(currentTurn+2) 시작.
-    if (moveData.effect?.rank) {
-      const { stat, target, value } = moveData.effect.rank;
-      const targetKey = target === "self" ? myKey : oppKey;
-      const targetRanks = targetKey === myKey ? myRanks : oppRanks;
-      const newValue = clampRank(getEffectiveRank(targetRanks, stat, currentTurn) + value);
-      const newRanks = { ...targetRanks, [stat]: { value: newValue, expireTurn: currentTurn + 2 } };
-      if (targetKey === myKey) myRanks = newRanks; else oppRanks = newRanks;
-      update[`${targetKey}_ranks`] = newRanks;
-      const tn = entries[targetKey][activeIdx[targetKey]]?.name ?? "포켓몬";
-      log.push(`${tn}의 ${stat} 랭크가 ${value > 0 ? "올랐다" : "내려갔다"}!`);
+    // 랭크 변화. moves.js의 rank: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? }
+    // 갱신 시점부터 turns만큼 다시 지속 시작.
+    if (moveData.rank && Math.random() < (moveData.rank.chance ?? 1)) {
+      const { turns } = moveData.rank;
+      for (const [field, { self, stat }] of Object.entries(RANK_FIELD_MAP)) {
+        const value = moveData.rank[field];
+        if (!value) continue;
+
+        const targetKey = self ? myKey : oppKey;
+        const targetRanks = targetKey === myKey ? myRanks : oppRanks;
+        const newValue = clampRank(getEffectiveRank(targetRanks, stat, currentTurn) + value);
+        const newRanks = { ...targetRanks, [stat]: { value: newValue, expireTurn: currentTurn + turns } };
+        if (targetKey === myKey) myRanks = newRanks; else oppRanks = newRanks;
+        update[`${targetKey}_ranks`] = newRanks;
+
+        const tn = entries[targetKey][activeIdx[targetKey]]?.name ?? "포켓몬";
+        const statLabel = stat === "evasion" ? "속도" : stat === "atk" ? "공격" : "방어";
+        log.push(`${tn}의 ${statLabel} 랭크가 ${value > 0 ? "올랐다" : "내려갔다"}!`);
+      }
     }
 
     // 전멸/교체 체크 (직접 데미지로 쓰러진 경우)

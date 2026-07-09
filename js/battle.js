@@ -799,15 +799,73 @@ function renderBenchSide(dataKey, uiKey, room) {
   container.style.display = "flex";
 }
 
+const LOG_MAX_LINES = 8;
+const LOG_TYPE_SPEED_MS = 25;
+let renderedLogCount = 0; // 지금까지 화면에 반영한 로그 줄 수 (신규 줄만 타이핑하기 위한 기준)
+let logInitialized = false; // 최초 진입/재접속 시엔 타이핑 없이 즉시 표시
+let logTypingChain = Promise.resolve(); // 여러 줄이 한 번에 추가돼도 순서대로 타이핑되도록 직렬화
+
+function trimLogLines(el) {
+  while (el.children.length > LOG_MAX_LINES) {
+    el.removeChild(el.firstChild);
+  }
+}
+
+function appendLogLineInstant(el, text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  el.appendChild(div);
+  trimLogLines(el);
+}
+
+function typeLogLine(el, text) {
+  return new Promise((resolve) => {
+    const div = document.createElement("div");
+    el.appendChild(div);
+    let i = 0;
+    const timer = setInterval(() => {
+      i++;
+      div.textContent = text.slice(0, i);
+      el.scrollTop = el.scrollHeight;
+      if (i >= text.length) {
+        clearInterval(timer);
+        trimLogLines(el);
+        resolve();
+      }
+    }, LOG_TYPE_SPEED_MS);
+  });
+}
+
 function renderLog(log = []) {
   const el = document.getElementById("battle-log");
-  el.innerHTML = "";
-  log.slice(-8).forEach((line) => {
-    const div = document.createElement("div");
-    div.textContent = line;
-    el.appendChild(div);
+
+  if (log.length < renderedLogCount) {
+    // 새 전투 등으로 로그가 리셋된 경우
+    el.innerHTML = "";
+    renderedLogCount = 0;
+    logInitialized = false;
+  }
+
+  if (!logInitialized) {
+    // 최초 렌더링(또는 재접속)은 기존 로그를 즉시 표시
+    el.innerHTML = "";
+    log.slice(-LOG_MAX_LINES).forEach((line) => appendLogLineInstant(el, line));
+    el.scrollTop = el.scrollHeight;
+    renderedLogCount = log.length;
+    logInitialized = true;
+    return;
+  }
+
+  if (log.length === renderedLogCount) return; // 새로 추가된 줄 없음
+
+  const newLines = log.slice(renderedLogCount);
+  renderedLogCount = log.length;
+
+  logTypingChain = logTypingChain.then(async () => {
+    for (const line of newLines) {
+      await typeLogLine(el, line);
+    }
   });
-  el.scrollTop = el.scrollHeight;
 }
 
 function renderTurn(room) {

@@ -22,6 +22,7 @@ import {
   checkActionPrevented,
   checkConfusionInterrupt,
   formatPokemonName,
+  hasAnyVolatile,
   josa,
 } from "./effecthandler.js";
 
@@ -332,7 +333,7 @@ function maybeResolveForcedAction(room) {
   const pkmn = room[`${myKey}_entry`]?.[activeIdx];
   if (!pkmn) return;
 
-  if (!pkmn.status && !pkmn.volatile) {
+  if (!pkmn.status && !hasAnyVolatile(pkmn)) {
     resolvedForcedTurn = room.round_no; // 막을 게 없으면 바로 통과
     return;
   }
@@ -365,7 +366,7 @@ async function resolveForcedActionAsync(myKey) {
   let blocked = !gate.canAct;
   if (gate.message) log.push(gate.message);
 
-  if (gate.canAct && pkmn.volatile === "혼란") {
+  if (gate.canAct && pkmn.volatiles?.["혼란"]) {
     const confusion = checkConfusionInterrupt(pkmn);
     pkmn = confusion.pokemon;
     if (confusion.message) log.push(confusion.message);
@@ -500,11 +501,13 @@ async function useMove(moveIdx) {
           log.push(`${dn}${josa(dn, "이가")} ${moveData.effect.status} 상태가 되었다!`);
         }
       } else if (moveData.effect.volatile) {
-        const before = updatedDefender.volatile;
-        updatedDefender = applyVolatile(updatedDefender, moveData.effect.volatile);
-        if (updatedDefender.volatile !== before) {
-          const dn = updatedDefender.name ?? "포켓몬";
-          log.push(`${dn}${josa(dn, "이가")} ${moveData.effect.volatile} 상태가 되었다!`);
+        const volName = moveData.effect.volatile;
+        const dn = updatedDefender.name ?? "포켓몬";
+        if (updatedDefender.volatiles?.[volName]) {
+          log.push(`${dn}${josa(dn, "은는")} 이미 ${volName} 상태다!`);
+        } else {
+          updatedDefender = applyVolatile(updatedDefender, volName);
+          log.push(`${dn}${josa(dn, "이가")} ${volName} 상태가 되었다!`);
         }
       }
     }

@@ -4,8 +4,8 @@
 // 기대하는 포켓몬 객체 필드:
 //   status: null | "독" | "화상" | "얼음" | "마비"
 //   statusData: 상태별 부가 정보 (예: 얼음의 freezeTurn)
-//   volatile: null | "혼란" | "풀죽음"
-//   volatileData: 상태변화별 부가 정보 (예: 혼란의 turnCount)
+//   volatiles: { [상태변화이름]: 부가정보 } (예: { "혼란": { duration, turnCount }, "풀죽음": {} })
+//     상태변화끼리는 서로 다른 종류면 동시에 걸릴 수 있음(중첩 가능). 같은 종류는 중복 적용 불가.
 //   types: array (예: ["독", "땅"]) - 면역 체크용
 
 export const STATUS_LIST = ["독", "화상", "얼음", "마비"];
@@ -55,17 +55,29 @@ export function applyStatus(pokemon, statusName) {
   return { ...pokemon, status: statusName, statusData };
 }
 
-// 상태변화 부여 시도. 이미 상태변화가 있으면 변화 없이 그대로 반환 (status와는 별개로 동시 보유 가능).
+// 상태변화 부여 시도. 같은 종류의 상태변화가 이미 있으면 변화 없이 그대로 반환.
+// 다른 종류의 상태변화는 서로 중첩되어 동시에 걸릴 수 있음 (status와도 별개로 동시 보유 가능).
 export function applyVolatile(pokemon, volatileName) {
   if (!VOLATILE_LIST.includes(volatileName)) return pokemon;
-  if (pokemon.volatile) return pokemon; // 상태변화끼리는 중첩 불가
-  
+  if (pokemon.volatiles?.[volatileName]) return pokemon; // 같은 상태변화 중복 적용 불가
+
   let volatileData = {};
   if (volatileName === "혼란") {
     // 3~5턴 지속
     volatileData = { duration: 3 + Math.floor(Math.random() * 3), turnCount: 0 };
   }
-  return { ...pokemon, volatile: volatileName, volatileData };
+  return { ...pokemon, volatiles: { ...pokemon.volatiles, [volatileName]: volatileData } };
+}
+
+// 상태변화를 하나라도 가지고 있는지 체크
+export function hasAnyVolatile(pokemon) {
+  return !!pokemon.volatiles && Object.keys(pokemon.volatiles).length > 0;
+}
+
+// 상태변화 맵에서 특정 항목만 제거한 새 맵을 반환
+function removeVolatile(pokemon, volatileName) {
+  const { [volatileName]: _removed, ...rest } = pokemon.volatiles ?? {};
+  return rest;
 }
 
 // 턴 종료 시(다이스 던지기 직전) 독/화상 데미지 처리. 매턴 양쪽 포켓몬에 대해 호출.
@@ -124,11 +136,11 @@ export function checkActionPrevented(pokemon) {
     return { canAct: true, pokemon, message: null };
   }
   
-  if (pokemon.volatile === "풀죽음") {
+  if (pokemon.volatiles?.["풀죽음"]) {
     // 1턴 지속이라 이번 턴 막고 바로 해제
     return {
       canAct: false,
-      pokemon: { ...pokemon, volatile: null, volatileData: {} },
+      pokemon: { ...pokemon, volatiles: removeVolatile(pokemon, "풀죽음") },
       message: `${pokemon.name}${josa(pokemon.name, "은는")} 풀이 죽어 움직일 수 없다!`,
     };
   }
@@ -140,27 +152,31 @@ export function checkActionPrevented(pokemon) {
 // 40% 확률로 기술이 취소되고 자기 자신을 (atk * 2) 고정 데미지로 공격함.
 // 반환: { confused: boolean, pokemon: 갱신된 포켓몬, selfDamage, message }
 export function checkConfusionInterrupt(pokemon) {
-  if (pokemon.volatile !== "혼란") {
+  const confusionData = pokemon.volatiles?.["혼란"];
+  if (!confusionData) {
     return { confused: false, pokemon, selfDamage: 0, message: null };
   }
-  
-  const turnCount = (pokemon.volatileData?.turnCount ?? 0) + 1;
-  const duration = pokemon.volatileData?.duration ?? 3;
-  
+
+  const turnCount = (confusionData.turnCount ?? 0) + 1;
+  const duration = confusionData.duration ?? 3;
+
   // 지속 턴 종료 또는 3턴째부터 33.3% 확률로 회복
   const durationOver = turnCount >= duration;
   const recovered = !durationOver && turnCount >= 3 && Math.random() < 1 / 3;
-  
+
   if (durationOver || recovered) {
     return {
       confused: false,
-      pokemon: { ...pokemon, volatile: null, volatileData: {} },
+      pokemon: { ...pokemon, volatiles: removeVolatile(pokemon, "혼란") },
       selfDamage: 0,
       message: `${pokemon.name}의 혼란이 풀렸다!`,
     };
   }
-  
-  const updatedPokemon = { ...pokemon, volatileData: { ...pokemon.volatileData, turnCount } };
+
+  const updatedPokemon = {
+    ...pokemon,
+    volatiles: { ...pokemon.volatiles, "혼란": { ...confusionData, turnCount } },
+  };
   
   if (Math.random() < 0.4) {
     const selfDamage = (pokemon.atk ?? 0) * 2;

@@ -69,7 +69,9 @@ let myUid = null;
 let mySlot = null; // "player1" | "player2" | "spectator" | null
 let roundInitInFlight = false; // player1의 첫 주사위 굴리기 중복 방지용 가드
 let lastAnimatedRound = 0; // 마지막으로 다이스 애니메이션 재생한 round_no
-let isAnimating = false; // 다이스 애니메이션 재생 중인지
+let isAnimating = false; // 다이스 굴리기 대기~재생 중 전체 (버튼 잠금용)
+let diceRolling = false; // playDiceRoll() 프라미스가 실제로 진행 중인지 (중복 시작 방지)
+let pendingDiceRoll = null; // 이전 라운드의 로그/연출 큐가 끝나길 기다리는 다이스 정보
 let actionInFlight = false; // useMove 처리 중 중복 클릭 방지용
 
 const DICE_SOUND_URL = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3";
@@ -253,7 +255,7 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
   for (const side of ["p1", "p2"]) {
     const pkmn = entries[side][activeIdx[side]];
     if (!pkmn) continue;
-    const tick = applyEndOfTurnStatusDamage(pkmn);
+    const tick = applyEndOfTurnStatusDamage(pkmn, currentTurn);
     if (tick.damage > 0) {
       entries[side][activeIdx[side]] = tick.pokemon;
       log.push(tick.message);
@@ -322,19 +324,36 @@ function listenBattle() {
     const roundNo = room.round_no ?? 0;
     const isNewRound = !!room.battle_turn && roundNo !== lastAnimatedRound;
 
-    if (isNewRound && !isAnimating) {
-      isAnimating = true;
-      document.getElementById("turn-indicator").innerText = "주사위 굴리는 중...";
-      renderTurnUI(room); // 버튼들 잠그기
+    if (isNewRound) {
+      if (!isAnimating) {
+        isAnimating = true;
+        renderTurnUI(room); // 버튼들 잠그기
+      }
+      // 이전 라운드의 로그/연출 큐가 다 끝난 뒤에 굴리도록 일단 대기시켜둠
       const { mineKey, enemyKey } = perspectiveKeys();
-      playDiceRoll(room[`${mineKey}_roll`], room[`${enemyKey}_roll`]).then(() => {
-        isAnimating = false;
-        lastAnimatedRound = roundNo;
-        afterDiceSettled(room);
-      });
+      pendingDiceRoll = { roundNo, mineRoll: room[`${mineKey}_roll`], enemyRoll: room[`${enemyKey}_roll`], room };
+      tryStartPendingDiceRoll();
     } else if (!isAnimating) {
       afterDiceSettled(room);
     }
+  });
+}
+
+// 이전 라운드의 로그 타이핑/피격 연출 큐가 완전히 빌 때까지는 다이스를 굴리지 않음.
+// processBoardQueue가 큐를 다 비울 때마다도 호출해서, 마지막 로그 줄 연출이 끝나자마자 이어서 굴림.
+function tryStartPendingDiceRoll() {
+  if (!pendingDiceRoll || diceRolling) return;
+  if (boardBusy || boardQueue.length > 0) return; // 아직 이전 라운드 연출 재생 중
+
+  const { roundNo, mineRoll, enemyRoll, room } = pendingDiceRoll;
+  pendingDiceRoll = null;
+  diceRolling = true;
+  document.getElementById("turn-indicator").innerText = "주사위 굴리는 중...";
+  playDiceRoll(mineRoll, enemyRoll).then(() => {
+    diceRolling = false;
+    isAnimating = false;
+    lastAnimatedRound = roundNo;
+    afterDiceSettled(room);
   });
 }
 
@@ -343,9 +362,10 @@ function afterDiceSettled(room) {
   renderTurnUI(room);
 }
 
-// 게임이 막 시작됐는데 아직 선공이 안 정해졌으면 player1이 한 번 굴려서 세팅
+// 게임이 막 시작됐는데 아직 선공이 안 정해졌으면 player1이 한 번 굴려서 세팅.
+// round_no로 판단(battle_turn만 보면 강제교체 대기 중의 null 상태와 구분이 안 돼서 재시작 취급될 수 있음).
 async function maybeInitRound(room) {
-  if (!room.game_started || room.battle_turn || room.battle_winner) return;
+  if (!room.game_started || (room.round_no ?? 0) > 0 || room.battle_winner) return;
   if (mySlot !== "player1" || roundInitInFlight) return;
 
   const p1Active = room.p1_entry?.[room.p1_active_idx ?? 0];
@@ -515,7 +535,7 @@ async function useMove(moveIdx) {
           // 상태이상 / 상태변화 부여 시도
           if (moveData.effect && Math.random() < moveData.effect.chance) {
             if (moveData.effect.status) {
-              const statusResult = applyStatus(updatedDefender, moveData.effect.status);
+              const statusResult = applyStatus(updatedDefender, moveData.effect.status, currentTurn);
               updatedDefender = statusResult.pokemon;
               if (statusResult.message) log.push(statusResult.message);
             } else if (moveData.effect.volatile) {
@@ -948,6 +968,7 @@ function renderBenchSide(dataKey, uiKey, room) {
 const LOG_MAX_LINES = 8;
 const LOG_TYPE_CHAR_MS = 18; // 한 글자 타이핑 간격
 const LOG_TYPE_GAP_MS = 80; // 한 스텝 끝난 후 다음 스텝 시작 전 여백
+const HIT_ANIM_DELAY_MS = 350; // 로그 타이핑이 끝난 뒤 shake/blink 연출 시작까지의 텀
 
 let renderedLogCount = 0; // 지금까지 큐에 반영한 로그 줄 수
 let renderedEventCount = 0; // 지금까지 큐에 반영한 연출 이벤트 수
@@ -991,7 +1012,11 @@ function typeLogLine(text, onDone) {
 }
 
 function processBoardQueue() {
-  if (boardBusy || boardQueue.length === 0) return;
+  if (boardBusy) return;
+  if (boardQueue.length === 0) {
+    tryStartPendingDiceRoll(); // 큐가 방금 다 비었으면, 대기 중이던 다음 라운드 다이스를 굴림
+    return;
+  }
   boardBusy = true;
   const step = boardQueue.shift();
   const next = () => {
@@ -1005,12 +1030,15 @@ function processBoardQueue() {
   }
 
   if (step.kind === "hit") {
-    const atkSide = step.side === "mine" ? "enemy" : "mine";
-    const playEffect = step.hasAttacker ? triggerAttackEffect(atkSide, step.side) : triggerBlink(step.side);
-    playEffect.then(() => {
-      applyPokemonVisual(step.side, step.pkmn, step.idx);
-      next();
-    });
+    // 로그가 다 보인 뒤 잠깐 텀을 두고 나서야 shake/blink 연출이 시작되도록
+    setTimeout(() => {
+      const atkSide = step.side === "mine" ? "enemy" : "mine";
+      const playEffect = step.hasAttacker ? triggerAttackEffect(atkSide, step.side) : triggerBlink(step.side);
+      playEffect.then(() => {
+        applyPokemonVisual(step.side, step.pkmn, step.idx);
+        next();
+      });
+    }, HIT_ANIM_DELAY_MS);
     return;
   }
 

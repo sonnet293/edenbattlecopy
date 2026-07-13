@@ -55,8 +55,9 @@ function statusAppliedMessage(name, statusName) {
 }
 
 // 상태이상 부여 시도. 면역이거나 이미 상태이상이 있으면 적용하지 않고 사유(reason)와 안내 메시지를 함께 반환.
+// currentTurn을 statusData.appliedTurn에 기록해둬서, 걸린 바로 그 턴에는 EOT 데미지가 들어가지 않도록 함.
 // 반환: { pokemon: 갱신된(또는 그대로인) 포켓몬, applied: boolean, reason: null | "immune" | "already", message }
-export function applyStatus(pokemon, statusName) {
+export function applyStatus(pokemon, statusName, currentTurn) {
   const name = pokemon.name ?? "포켓몬";
   if (!STATUS_LIST.includes(statusName)) return { pokemon, applied: false, reason: null, message: null };
   if (pokemon.status) {
@@ -66,7 +67,10 @@ export function applyStatus(pokemon, statusName) {
     return { pokemon, applied: false, reason: "immune", message: `${name}${josa(name, "은는")} ${statusName}에 걸리지 않는다!` };
   }
 
-  const statusData = statusName === "얼음" ? { freezeTurn: 0 } : {};
+  const statusData = {
+    ...(statusName === "얼음" ? { freezeTurn: 0 } : {}),
+    appliedTurn: currentTurn,
+  };
   return {
     pokemon: { ...pokemon, status: statusName, statusData },
     applied: true,
@@ -101,12 +105,16 @@ function removeVolatile(pokemon, volatileName) {
 }
 
 // 턴 종료 시(다이스 던지기 직전) 독/화상 데미지 처리. 매턴 양쪽 포켓몬에 대해 호출.
+// 상태이상에 걸린 바로 그 턴(appliedTurn === currentTurn)에는 데미지를 주지 않고, 다음 턴부터 틱이 들어감.
 // 반환: { pokemon: 갱신된 포켓몬, damage, message }
-export function applyEndOfTurnStatusDamage(pokemon) {
+export function applyEndOfTurnStatusDamage(pokemon, currentTurn) {
   if (pokemon.status !== "독" && pokemon.status !== "화상") {
     return { pokemon, damage: 0, message: null };
   }
-  
+  if (pokemon.statusData?.appliedTurn === currentTurn) {
+    return { pokemon, damage: 0, message: null };
+  }
+
   const damage = Math.max(1, Math.floor(pokemon.maxHp / 16));
   const newHp = Math.max(0, pokemon.hp - damage);
   const updated = { ...pokemon, hp: newHp };
@@ -148,7 +156,7 @@ export function checkActionPrevented(pokemon) {
   }
 
   if (pokemon.status === "마비") {
-    const paralyzed = Math.random() < 0.2;
+    const paralyzed = Math.random() < 0.25;
     if (paralyzed) {
       return {
         canAct: false,

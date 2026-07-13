@@ -45,15 +45,34 @@ export function formatPokemonName(pokemon) {
   return pokemon.status ? `${pokemon.name} [${pokemon.status}]` : pokemon.name;
 }
 
-// 상태이상 부여 시도. 면역이거나 이미 상태이상이 있으면 적용하지 않고 사유(reason)를 함께 반환.
-// 반환: { pokemon: 갱신된(또는 그대로인) 포켓몬, applied: boolean, reason: null | "immune" | "already" }
+// 상태이상이 새로 걸렸을 때의 안내 메시지 (상태별로 표현이 다름)
+function statusAppliedMessage(name, statusName) {
+  if (statusName === "독") return `${name}의 몸에 독이 퍼졌다!`;
+  if (statusName === "화상") return `${name}${josa(name, "은는")} 화상을 입었다!`;
+  if (statusName === "마비") return `${name}${josa(name, "은는")} 마비되어 기술이 나오기 어려워졌다!`;
+  if (statusName === "얼음") return `${name}${josa(name, "은는")} 얼어붙었다!`;
+  return `${name}${josa(name, "이가")} ${statusName} 상태가 되었다!`;
+}
+
+// 상태이상 부여 시도. 면역이거나 이미 상태이상이 있으면 적용하지 않고 사유(reason)와 안내 메시지를 함께 반환.
+// 반환: { pokemon: 갱신된(또는 그대로인) 포켓몬, applied: boolean, reason: null | "immune" | "already", message }
 export function applyStatus(pokemon, statusName) {
-  if (!STATUS_LIST.includes(statusName)) return { pokemon, applied: false, reason: null };
-  if (pokemon.status) return { pokemon, applied: false, reason: "already" }; // 상태이상끼리는 중첩 불가
-  if (isImmuneToStatus(pokemon, statusName)) return { pokemon, applied: false, reason: "immune" };
+  const name = pokemon.name ?? "포켓몬";
+  if (!STATUS_LIST.includes(statusName)) return { pokemon, applied: false, reason: null, message: null };
+  if (pokemon.status) {
+    return { pokemon, applied: false, reason: "already", message: `${name}${josa(name, "은는")} 이미 ${statusName} 상태다!` };
+  }
+  if (isImmuneToStatus(pokemon, statusName)) {
+    return { pokemon, applied: false, reason: "immune", message: `${name}${josa(name, "은는")} ${statusName}에 걸리지 않는다!` };
+  }
 
   const statusData = statusName === "얼음" ? { freezeTurn: 0 } : {};
-  return { pokemon: { ...pokemon, status: statusName, statusData }, applied: true, reason: null };
+  return {
+    pokemon: { ...pokemon, status: statusName, statusData },
+    applied: true,
+    reason: null,
+    message: statusAppliedMessage(name, statusName),
+  };
 }
 
 // 상태변화 부여 시도. 같은 종류의 상태변화가 이미 있으면 변화 없이 그대로 반환.
@@ -91,8 +110,11 @@ export function applyEndOfTurnStatusDamage(pokemon) {
   const damage = Math.max(1, Math.floor(pokemon.maxHp / 16));
   const newHp = Math.max(0, pokemon.hp - damage);
   const updated = { ...pokemon, hp: newHp };
-  const message = `${pokemon.name}${josa(pokemon.name, "이가")} ${pokemon.status} 데미지를 입었다! (${damage})`;
-  
+  const name = pokemon.name ?? "포켓몬";
+  const message = pokemon.status === "독"
+    ? `${name}${josa(name, "은는")} 독에 의한 데미지를 입었다!`
+    : `${name}${josa(name, "은는")} 화상 데미지를 입었다!`;
+
   return { pokemon: updated, damage, message };
 }
 
@@ -121,17 +143,17 @@ export function checkActionPrevented(pokemon) {
     return {
       canAct: false,
       pokemon: { ...pokemon, statusData: { ...pokemon.statusData, freezeTurn } },
-      message: `${pokemon.name}${josa(pokemon.name, "은는")} 얼어서 움직일 수 없다!`,
+      message: `${pokemon.name}${josa(pokemon.name, "은는")} 얼어버려서 움직일 수 없다!`,
     };
   }
-  
+
   if (pokemon.status === "마비") {
     const paralyzed = Math.random() < 0.2;
     if (paralyzed) {
       return {
         canAct: false,
         pokemon,
-        message: `${pokemon.name}${josa(pokemon.name, "은는")} 마비되어 움직일 수 없다!`,
+        message: `${pokemon.name}${josa(pokemon.name, "은는")} 몸이 저려서 움직일 수 없다!`,
       };
     }
     return { canAct: true, pokemon, message: null };

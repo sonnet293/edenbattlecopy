@@ -164,18 +164,41 @@ function calcBaseEvasionPercent(attackerSpd, defenderSpd) {
   return Math.max(0, Math.min(10, 5 * (defenderSpd - attackerSpd)));
 }
 
-// 명중 판정. alwaysHit이면 항상 명중.
-// 회피율 = spd차 기반 회피율(0~10%) * 회피 랭크 보정값(0.7~1.3)
-// 최종 명중률 = 기술 명중률 * (1 - 최종 회피율)
-function rollHit(moveData, attacker, defender, defenderRanks, currentTurn) {
+// 명중 판정 (기술 자체의 명중률만 사용). 실패하면 "빗나갔다" - 공격자 쪽 귀책.
+function rollAccuracy(moveData) {
   if (moveData.alwaysHit) return true;
+  return Math.random() < moveData.accuracy / 100;
+}
 
+// 회피 판정 (방어자의 회피율만 사용). 성공하면 "맞지 않았다" - 방어자 쪽 회피.
+// 회피율 = spd차 기반 회피율(0~10%) * 회피 랭크 보정값(0.7~1.3)
+function rollEvasion(attacker, defender, defenderRanks, currentTurn) {
   const baseEvasionPct = calcBaseEvasionPercent(attacker.spd, defender.spd);
   const evasionRankMult = rankMultiplier(getEffectiveRank(defenderRanks, "evasion", currentTurn));
-  const finalEvasionPct = baseEvasionPct * evasionRankMult;
+  const finalEvasionPct = Math.max(0, Math.min(100, baseEvasionPct * evasionRankMult));
+  return Math.random() < finalEvasionPct / 100;
+}
 
-  const chance = Math.max(0, Math.min(1, (moveData.accuracy / 100) * (1 - finalEvasionPct / 100)));
-  return Math.random() < chance;
+// 급소 판정. 급소율 = 공격력 * 2% (100% 상한). 급소 시 최종 피해량 x1.5.
+function rollCrit(attacker) {
+  return Math.random() < Math.min(1, (attacker.atk ?? 0) * 0.02);
+}
+
+// 랭크 변화 로그 메시지. oldValue/newValue는 적용 전/후의 유효 랭크값(-3~3), wasIncrease는 이번에 올리려던 시도였는지.
+function buildRankChangeMessage(name, statLabel, oldValue, newValue, wasIncrease) {
+  const delta = newValue - oldValue;
+  if (delta === 0) {
+    return wasIncrease
+      ? `${name}의 ${statLabel}${josa(statLabel, "은는")} 더 이상 올라가지 않는다!`
+      : `${name}의 ${statLabel}${josa(statLabel, "은는")} 더 이상 내려가지 않는다!`;
+  }
+  if (newValue === 0) {
+    return `${name}의 ${statLabel}${josa(statLabel, "이가")} 원래대로 돌아왔다!`;
+  }
+  if (delta > 0) {
+    return `${name}의 ${statLabel}${josa(statLabel, "이가")} ${delta} 상승했다!`;
+  }
+  return `${name}의 ${statLabel}${josa(statLabel, "이가")} ${-delta} 하락했다!`;
 }
 
 // spd + 1d10 비교로 선공 결정. 동점이면 다시 굴림. 굴린 다이스 값은 애니메이션용으로 같이 반환.
@@ -252,7 +275,7 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
     } else {
       update[`${side}_pending_switch`] = true;
       needsSwitch = true;
-      log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(side, room)}, 교체할 포켓몬을 선택해줘`);
+      log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다! ${displayName(side, room)}, 교체할 포켓몬을 선택해줘`);
     }
   }
 
@@ -274,7 +297,8 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
   update.round_no = currentTurn + 1;
   update.p1_roll = r1;
   update.p2_roll = r2;
-  log.push(`다음 턴! ${displayName(first, room)} 선공`);
+  const firstPkmnName = (first === "p1" ? p1Active : p2Active)?.name ?? "포켓몬";
+  log.push(`다음 턴! ${firstPkmnName}의 선공!`);
 
   return update;
 }
@@ -330,6 +354,13 @@ async function maybeInitRound(room) {
 
   roundInitInFlight = true;
   const { first, r1, r2 } = decideFirst(p1Active, p2Active);
+
+  const p1Name = displayName("p1", room);
+  const p2Name = displayName("p2", room);
+  const p1PkmnName = p1Active.name ?? "포켓몬";
+  const p2PkmnName = p2Active.name ?? "포켓몬";
+  const firstPkmnName = (first === "p1" ? p1Active : p2Active)?.name ?? "포켓몬";
+
   await updateDoc(roomRef, {
     battle_turn: first,
     round_first: first,
@@ -340,7 +371,12 @@ async function maybeInitRound(room) {
     p2_ranks: defaultRanks(),
     p1_pending_switch: false,
     p2_pending_switch: false,
-    battle_log: [`턴 1 시작! ${displayName(first, room)} 선공`],
+    battle_log: [
+      `${p1Name}${josa(p1Name, "과와")} ${p2Name}의 승부가 시작됐다!`,
+      `${p1Name}${josa(p1Name, "은는")} ${p1PkmnName}${josa(p1PkmnName, "을를")} 내보냈다!`,
+      `${p2Name}${josa(p2Name, "은는")} ${p2PkmnName}${josa(p2PkmnName, "을를")} 내보냈다!`,
+      `${firstPkmnName}의 선공!`,
+    ],
     battle_event_log: [],
   });
 }
@@ -418,7 +454,7 @@ async function useMove(moveIdx) {
       if (faint.fainted) {
         if (faint.allFainted) {
           update.battle_winner = oppKey;
-          log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다!`);
+          log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다!`);
           log.push(`${displayName(oppKey, room)} 승리!`);
           update[`${myKey}_entry`] = entries[myKey];
           update.battle_log = log;
@@ -427,110 +463,115 @@ async function useMove(moveIdx) {
           return;
         }
         update[`${myKey}_pending_switch`] = true;
-        log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(myKey, room)}, 교체할 포켓몬을 선택해줘`);
+        log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다! ${displayName(myKey, room)}, 교체할 포켓몬을 선택해줘`);
         directPendingSide = myKey;
       }
     } else {
-      const hit = rollHit(moveData, attacker, defender, oppRanks, currentTurn);
+      const attackerName = currentAttacker.name ?? "포켓몬";
+      log.push(`${attackerName}의 ${moveSlot.name}!`);
+      const moveLogIndex = log.length - 1;
 
-      if (!hit) {
-        log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! 빗나갔다...`);
+      const accuracyHit = rollAccuracy(moveData);
+
+      if (!accuracyHit) {
+        log.push(`그러나 ${attackerName}의 공격은 빗나갔다!`);
       } else {
-        // 공격 랭크업/다운: 타입 상성 적용 "이전" 보정값으로, 1d10 굴림에만 곱해짐 (급소율에는 영향 없음)
-        // 방어 랭크업/다운: 최종 피해량 계산 이후 보정값으로, 방어력x3 항에만 곱해짐
-        const atkMult = rankMultiplier(getEffectiveRank(myRanks, "atk", currentTurn));
-        const defMult = rankMultiplier(getEffectiveRank(oppRanks, "def", currentTurn));
+        const evaded = !moveData.alwaysHit && rollEvasion(attacker, defender, oppRanks, currentTurn);
+        const defenderName = defender.name ?? "포켓몬";
 
-        const typeMult = getDefenderTypeMultiplier(moveData.type, defender.types);
-        const stab = hasStab(attacker.types, moveData.type) ? 1.3 : 1;
-
-        let updatedDefender = { ...defender };
-
-        // 위력이 0인 기술(상태이상/랭크 변화 전용)은 데미지를 주지 않음
-        if (moveData.power > 0) {
-          // 최종 피해량 = ((위력 + 공격력x4 + 1d10 x 공격랭크보정) x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
-          const rawDamage =
-            (moveData.power + attacker.atk * 4 + rollD10() * atkMult) * typeMult * stab -
-            defender.def * 3 * defMult;
-          const dmg = Math.max(0, Math.round(rawDamage));
-          const newHp = Math.max(0, defender.hp - dmg);
-
-          updatedDefender = { ...defender, hp: newHp };
-
-          const effectText =
-            typeMult === 0 ? " (효과가 없는 듯하다...)" :
-            typeMult > 1 ? " (효과가 굉장했다!)" :
-            typeMult < 1 ? " (효과가 별로인 듯하다...)" : "";
-          log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! ${dmg} 데미지${effectText}`);
-          events.push({ logIndex: log.length - 1, type: "hit", side: oppKey, hp: newHp, hasAttacker: true });
+        if (evaded) {
+          log.push(`${defenderName}에게는 맞지 않았다!`);
         } else {
-          log.push(`${displayName(myKey, room)}의 ${moveSlot.name}!`);
-        }
+          // 공격 랭크업/다운: 타입 상성 적용 "이전" 보정값으로, 1d10 굴림에만 곱해짐 (급소율에는 영향 없음)
+          // 방어 랭크업/다운: 최종 피해량 계산 이후 보정값으로, 방어력x3 항에만 곱해짐
+          const atkMult = rankMultiplier(getEffectiveRank(myRanks, "atk", currentTurn));
+          const defMult = rankMultiplier(getEffectiveRank(oppRanks, "def", currentTurn));
 
-        // 상태이상 / 상태변화 부여 시도
-        if (moveData.effect && Math.random() < moveData.effect.chance) {
-          if (moveData.effect.status) {
-            const dn = updatedDefender.name ?? "포켓몬";
-            const statusResult = applyStatus(updatedDefender, moveData.effect.status);
-            updatedDefender = statusResult.pokemon;
-            if (statusResult.applied) {
-              log.push(`${dn}${josa(dn, "이가")} ${moveData.effect.status} 상태가 되었다!`);
-            } else if (statusResult.reason === "immune") {
-              log.push(`${dn}${josa(dn, "은는")} ${moveData.effect.status}에 걸리지 않는다!`);
-            } else if (statusResult.reason === "already") {
-              log.push(`${dn}${josa(dn, "은는")} 이미 ${moveData.effect.status} 상태다!`);
+          const typeMult = getDefenderTypeMultiplier(moveData.type, defender.types);
+          const stab = hasStab(attacker.types, moveData.type) ? 1.3 : 1;
+
+          let updatedDefender = { ...defender };
+
+          // 위력이 0인 기술(상태이상/랭크 변화 전용)은 데미지를 주지 않음
+          if (moveData.power > 0) {
+            // 최종 피해량 = ((위력 + 공격력x4 + 1d10 x 공격랭크보정) x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
+            const rawDamage =
+              (moveData.power + attacker.atk * 4 + rollD10() * atkMult) * typeMult * stab -
+              defender.def * 3 * defMult;
+            const isCrit = rollCrit(attacker);
+            const dmg = Math.max(0, Math.round(rawDamage * (isCrit ? 1.5 : 1)));
+            const newHp = Math.max(0, defender.hp - dmg);
+
+            updatedDefender = { ...defender, hp: newHp };
+            events.push({ logIndex: moveLogIndex, type: "hit", side: oppKey, hp: newHp, hasAttacker: true });
+
+            if (isCrit && dmg > 0) log.push("급소에 맞았다!");
+
+            if (typeMult === 0) log.push(`${defenderName}에게는 효과가 없다…`);
+            else if (typeMult > 1) log.push("효과가 굉장했다!");
+            else if (typeMult < 1) log.push("효과가 별로인 듯하다…");
+          }
+
+          // 상태이상 / 상태변화 부여 시도
+          if (moveData.effect && Math.random() < moveData.effect.chance) {
+            if (moveData.effect.status) {
+              const statusResult = applyStatus(updatedDefender, moveData.effect.status);
+              updatedDefender = statusResult.pokemon;
+              if (statusResult.message) log.push(statusResult.message);
+            } else if (moveData.effect.volatile) {
+              const volName = moveData.effect.volatile;
+              const dn = updatedDefender.name ?? "포켓몬";
+              if (updatedDefender.volatiles?.[volName]) {
+                log.push(`${dn}${josa(dn, "은는")} 이미 ${volName} 상태다!`);
+              } else {
+                updatedDefender = applyVolatile(updatedDefender, volName);
+                log.push(`${dn}${josa(dn, "이가")} ${volName} 상태가 되었다!`);
+              }
             }
-          } else if (moveData.effect.volatile) {
-            const volName = moveData.effect.volatile;
-            const dn = updatedDefender.name ?? "포켓몬";
-            if (updatedDefender.volatiles?.[volName]) {
-              log.push(`${dn}${josa(dn, "은는")} 이미 ${volName} 상태다!`);
-            } else {
-              updatedDefender = applyVolatile(updatedDefender, volName);
-              log.push(`${dn}${josa(dn, "이가")} ${volName} 상태가 되었다!`);
+          }
+
+          entries[oppKey][activeIdx[oppKey]] = updatedDefender;
+
+          // 랭크 변화. moves.js의 rank: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? }
+          // 갱신 시점부터 turns만큼 다시 지속 시작.
+          if (moveData.rank && Math.random() < (moveData.rank.chance ?? 1)) {
+            const { turns } = moveData.rank;
+            for (const [field, { self, stat }] of Object.entries(RANK_FIELD_MAP)) {
+              const value = moveData.rank[field];
+              if (!value) continue;
+
+              const targetKey = self ? myKey : oppKey;
+              const targetRanks = targetKey === myKey ? myRanks : oppRanks;
+              const oldValue = getEffectiveRank(targetRanks, stat, currentTurn);
+              const newValue = clampRank(oldValue + value);
+              const newRanks = { ...targetRanks, [stat]: { value: newValue, expireTurn: currentTurn + turns } };
+              if (targetKey === myKey) myRanks = newRanks; else oppRanks = newRanks;
+              update[`${targetKey}_ranks`] = newRanks;
+
+              const tn = entries[targetKey][activeIdx[targetKey]]?.name ?? "포켓몬";
+              const statLabel = stat === "evasion" ? "속도" : stat === "atk" ? "공격" : "방어";
+              log.push(buildRankChangeMessage(tn, statLabel, oldValue, newValue, value > 0));
             }
           }
-        }
 
-        entries[oppKey][activeIdx[oppKey]] = updatedDefender;
-
-        // 랭크 변화. moves.js의 rank: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? }
-        // 갱신 시점부터 turns만큼 다시 지속 시작.
-        if (moveData.rank && Math.random() < (moveData.rank.chance ?? 1)) {
-          const { turns } = moveData.rank;
-          for (const [field, { self, stat }] of Object.entries(RANK_FIELD_MAP)) {
-            const value = moveData.rank[field];
-            if (!value) continue;
-
-            const targetKey = self ? myKey : oppKey;
-            const targetRanks = targetKey === myKey ? myRanks : oppRanks;
-            const newValue = clampRank(getEffectiveRank(targetRanks, stat, currentTurn) + value);
-            const newRanks = { ...targetRanks, [stat]: { value: newValue, expireTurn: currentTurn + turns } };
-            if (targetKey === myKey) myRanks = newRanks; else oppRanks = newRanks;
-            update[`${targetKey}_ranks`] = newRanks;
-
-            const tn = entries[targetKey][activeIdx[targetKey]]?.name ?? "포켓몬";
-            const statLabel = stat === "evasion" ? "속도" : stat === "atk" ? "공격" : "방어";
-            log.push(`${tn}의 ${statLabel} 랭크가 ${value > 0 ? "올랐다" : "내려갔다"}!`);
+          // 전멸/교체 체크 (직접 데미지로 쓰러진 경우)
+          const faint = handleFaintSwitch(entries, oppKey, activeIdx);
+          if (faint.fainted) {
+            if (faint.allFainted) {
+              update.battle_winner = myKey;
+              log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다!`);
+              log.push(`${displayName(myKey, room)} 승리!`);
+              update[`${myKey}_entry`] = entries[myKey];
+              update[`${oppKey}_entry`] = entries[oppKey];
+              update.battle_log = log;
+              update.battle_event_log = events;
+              await updateDoc(roomRef, update);
+              return;
+            }
+            update[`${oppKey}_pending_switch`] = true;
+            log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다! ${displayName(oppKey, room)}, 교체할 포켓몬을 선택해줘`);
+            directPendingSide = oppKey;
           }
-        }
-
-        // 전멸/교체 체크 (직접 데미지로 쓰러진 경우)
-        const faint = handleFaintSwitch(entries, oppKey, activeIdx);
-        if (faint.fainted) {
-          if (faint.allFainted) {
-            update.battle_winner = myKey;
-            log.push(`${displayName(myKey, room)} 승리!`);
-            update[`${myKey}_entry`] = entries[myKey];
-            update[`${oppKey}_entry`] = entries[oppKey];
-            update.battle_log = log;
-            update.battle_event_log = events;
-            await updateDoc(roomRef, update);
-            return;
-          }
-          update[`${oppKey}_pending_switch`] = true;
-          log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(oppKey, room)}, 교체할 포켓몬을 선택해줘`);
-          directPendingSide = oppKey;
         }
       }
     }
@@ -593,7 +634,9 @@ async function switchPokemon(targetIdx) {
 
   if (pendingSwitch) {
     update[`${myKey}_pending_switch`] = false;
-    log.push(`${displayName(myKey, room)}, 이어서 ${formatPokemonName(target)} 출전!`);
+    const pName = displayName(myKey, room);
+    const dn = target.name ?? "포켓몬";
+    log.push(`${pName}${josa(pName, "은는")} ${dn}${josa(dn, "을를")} 내보냈다!`);
     events.push({ logIndex: log.length - 1, type: "switch", side: myKey, idx: targetIdx });
 
     const oppKey = myKey === "p1" ? "p2" : "p1";
@@ -608,7 +651,8 @@ async function switchPokemon(targetIdx) {
       update.round_no = (room.round_no ?? 1) + 1;
       update.p1_roll = r1;
       update.p2_roll = r2;
-      log.push(`다음 턴! ${displayName(first, room)} 선공`);
+      const firstPkmnName = (first === "p1" ? p1Active : p2Active)?.name ?? "포켓몬";
+      log.push(`다음 턴! ${firstPkmnName}의 선공!`);
     }
 
     update.battle_log = log;
@@ -618,7 +662,13 @@ async function switchPokemon(targetIdx) {
   }
 
   // 자발적 교체는 내 턴(액션)을 소모함
-  log.push(`${displayName(myKey, room)}, ${formatPokemonName(prevPkmn)} 돌아와! ${formatPokemonName(target)} 출전!`);
+  {
+    const prevName = prevPkmn?.name ?? "포켓몬";
+    const dn = target.name ?? "포켓몬";
+    const pName = displayName(myKey, room);
+    log.push(`돌아와, ${prevName}!`);
+    log.push(`${pName}${josa(pName, "은는")} ${dn}${josa(dn, "을를")} 내보냈다!`);
+  }
   events.push({ logIndex: log.length - 1, type: "switch", side: myKey, idx: targetIdx });
 
   const oppKeyForAdvance = myKey === "p1" ? "p2" : "p1";

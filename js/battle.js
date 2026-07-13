@@ -22,7 +22,6 @@ import {
   checkActionPrevented,
   checkConfusionInterrupt,
   formatPokemonName,
-  hasAnyVolatile,
   josa,
 } from "./effecthandler.js";
 
@@ -71,8 +70,7 @@ let mySlot = null; // "player1" | "player2" | "spectator" | null
 let roundInitInFlight = false; // player1의 첫 주사위 굴리기 중복 방지용 가드
 let lastAnimatedRound = 0; // 마지막으로 다이스 애니메이션 재생한 round_no
 let isAnimating = false; // 다이스 애니메이션 재생 중인지
-let resolvedForcedTurn = 0; // 얼음/마비/혼란 등 강제행동 체크를 끝낸 round_no
-let forcedActionPending = false; // 강제행동 체크 처리 중인지 (버튼 잠금용)
+let actionInFlight = false; // useMove 처리 중 중복 클릭 방지용
 
 const DICE_SOUND_URL = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3";
 const diceSound = new Audio(DICE_SOUND_URL);
@@ -210,7 +208,7 @@ function handleFaintSwitch(entries, sideKey, activeIdx) {
 
 // 한 명(선공 or 후공)의 행동이 끝난 뒤 다음 단계를 계산.
 // alreadyPendingSides: 이번 액션에서 "직접 데미지"로 이미 교체 대기 처리된 쪽(들).
-//   - 이미 호출하는 쪽(useMove/resolveForcedActionAsync)에서 pending_switch 플래그와 로그를 다 찍었으므로
+//   - 이미 호출하는 쪽(useMove)에서 pending_switch 플래그와 로그를 다 찍었으므로
 //     여기서는 중복으로 다시 찍지 않고, 그냥 라운드 진행을 멈추기만 함.
 // entries/activeIdx를 직접 변경하며, log에 메시지를 push함.
 function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, events, alreadyPendingSides = new Set()) {
@@ -316,9 +314,8 @@ function listenBattle() {
   });
 }
 
-// 다이스(선공 결정)가 끝난 뒤: 얼음/마비/풀죽음/혼란부터 체크하고 화면을 갱신
+// 다이스(선공 결정)가 끝난 뒤 화면을 갱신
 function afterDiceSettled(room) {
-  maybeResolveForcedAction(room);
   renderTurnUI(room);
 }
 
@@ -348,261 +345,213 @@ async function maybeInitRound(room) {
   });
 }
 
-// 내 턴이 됐을 때 얼음/마비/풀죽음/혼란부터 체크. 막히면 기술 선택 없이 바로 턴을 넘김.
-function maybeResolveForcedAction(room) {
+async function useMove(moveIdx) {
   const myKey = slotKey(mySlot);
-  if (!myKey || room.battle_turn !== myKey || room.battle_winner) return;
-  if (forcedActionPending) return; // 이미 처리 중이면 중복 호출 방지
-  if (room.round_no === resolvedForcedTurn) return; // 이미 이번 턴은 체크함
+  if (!myKey || isAnimating || actionInFlight) return;
 
-  const activeIdx = room[`${myKey}_active_idx`] ?? 0;
-  const pkmn = room[`${myKey}_entry`]?.[activeIdx];
-  if (!pkmn) return;
+  actionInFlight = true;
+  try {
+    const snap = await getDoc(roomRef);
+    const room = snap.data();
+    if (!room || room.battle_winner) return;
+    if (room.battle_turn !== myKey) return; // 내 턴 아니면 무시
 
-  if (!pkmn.status && !hasAnyVolatile(pkmn)) {
-    resolvedForcedTurn = room.round_no; // 막을 게 없으면 바로 통과
-    return;
-  }
+    const oppKey = myKey === "p1" ? "p2" : "p1";
+    const entries = {
+      p1: [...(room.p1_entry ?? [])],
+      p2: [...(room.p2_entry ?? [])],
+    };
+    const activeIdx = {
+      p1: room.p1_active_idx ?? 0,
+      p2: room.p2_active_idx ?? 0,
+    };
+    const currentTurn = room.round_no ?? 1;
 
-  forcedActionPending = true;
-  resolveForcedActionAsync(myKey).finally(() => {
-    forcedActionPending = false;
-  });
-}
+    const attacker = entries[myKey][activeIdx[myKey]];
+    const defender = entries[oppKey][activeIdx[oppKey]];
+    if (!attacker || !defender) return;
 
-async function resolveForcedActionAsync(myKey) {
-  const snap = await getDoc(roomRef);
-  const room = snap.data();
-  if (!room || room.battle_winner || room.battle_turn !== myKey) return;
-  if (room.round_no === resolvedForcedTurn) return; // 이미 처리됨
+    const moveSlot = attacker.moves?.[moveIdx];
+    if (!moveSlot || (moveSlot.pp ?? 0) <= 0) return; // PP 없으면 사용 불가
 
-  const oppKey = myKey === "p1" ? "p2" : "p1";
-  const entries = { p1: [...(room.p1_entry ?? [])], p2: [...(room.p2_entry ?? [])] };
-  const activeIdx = { p1: room.p1_active_idx ?? 0, p2: room.p2_active_idx ?? 0 };
-  const currentTurn = room.round_no ?? 1;
-
-  let pkmn = entries[myKey][activeIdx[myKey]];
-  if (!pkmn) return;
-
-  const log = [...(room.battle_log ?? [])];
-  const events = [...(room.battle_event_log ?? [])];
-  const update = {};
-
-  const gate = checkActionPrevented(pkmn);
-  pkmn = gate.pokemon;
-  let blocked = !gate.canAct;
-  if (gate.message) log.push(gate.message);
-
-  if (gate.canAct && pkmn.volatiles?.["혼란"]) {
-    const confusion = checkConfusionInterrupt(pkmn);
-    pkmn = confusion.pokemon;
-    if (confusion.message) log.push(confusion.message);
-    if (confusion.confused) {
-      blocked = true;
-      events.push({ logIndex: log.length - 1, type: "hit", side: myKey, hp: confusion.pokemon.hp, hasAttacker: false });
+    const moveData = MOVES[moveSlot.name];
+    if (!moveData) {
+      console.warn(`moves.js에 "${moveSlot.name}" 기술이 정의되어 있지 않음`);
+      return;
     }
-  }
 
-  entries[myKey][activeIdx[myKey]] = pkmn;
-  resolvedForcedTurn = currentTurn;
+    // PP 소모
+    const newMoves = [...attacker.moves];
+    newMoves[moveIdx] = { ...moveSlot, pp: moveSlot.pp - 1 };
+    let currentAttacker = { ...attacker, moves: newMoves };
+    entries[myKey][activeIdx[myKey]] = currentAttacker;
 
-  if (!blocked) {
-    // 행동 가능해짐 (얼음 풀림 / 마비 통과 / 혼란 회복 등) - 엔트리만 갱신, 턴은 그대로 둠
+    let myRanks = room[`${myKey}_ranks`] ?? defaultRanks();
+    let oppRanks = room[`${oppKey}_ranks`] ?? defaultRanks();
+
+    const log = [...(room.battle_log ?? [])];
+    const events = [...(room.battle_event_log ?? [])];
+    const update = {};
+    let directPendingSide = null;
+
+    // 기술을 고른 뒤에야 얼음/마비/혼란으로 인한 행동 저지를 판정 (버튼은 항상 활성화된 상태로 유지)
+    const gate = checkActionPrevented(currentAttacker);
+    currentAttacker = gate.pokemon;
+    let blocked = !gate.canAct;
+    if (gate.message) log.push(gate.message);
+
+    if (gate.canAct && currentAttacker.volatiles?.["혼란"]) {
+      const confusion = checkConfusionInterrupt(currentAttacker);
+      currentAttacker = confusion.pokemon;
+      if (confusion.message) log.push(confusion.message);
+      if (confusion.confused) {
+        blocked = true;
+        events.push({ logIndex: log.length - 1, type: "hit", side: myKey, hp: currentAttacker.hp, hasAttacker: false });
+      }
+    }
+
+    entries[myKey][activeIdx[myKey]] = currentAttacker;
+
+    if (blocked) {
+      // 행동 저지(혼란 자해 포함) -> 자기 자신이 쓰러졌는지 체크
+      const faint = handleFaintSwitch(entries, myKey, activeIdx);
+      if (faint.fainted) {
+        if (faint.allFainted) {
+          update.battle_winner = oppKey;
+          log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다!`);
+          log.push(`${displayName(oppKey, room)} 승리!`);
+          update[`${myKey}_entry`] = entries[myKey];
+          update.battle_log = log;
+          update.battle_event_log = events;
+          await updateDoc(roomRef, update);
+          return;
+        }
+        update[`${myKey}_pending_switch`] = true;
+        log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(myKey, room)}, 교체할 포켓몬을 선택해줘`);
+        directPendingSide = myKey;
+      }
+    } else {
+      const hit = rollHit(moveData, attacker, defender, oppRanks, currentTurn);
+
+      if (!hit) {
+        log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! 빗나갔다...`);
+      } else {
+        // 공격 랭크업/다운: 타입 상성 적용 "이전" 보정값으로, 1d10 굴림에만 곱해짐 (급소율에는 영향 없음)
+        // 방어 랭크업/다운: 최종 피해량 계산 이후 보정값으로, 방어력x3 항에만 곱해짐
+        const atkMult = rankMultiplier(getEffectiveRank(myRanks, "atk", currentTurn));
+        const defMult = rankMultiplier(getEffectiveRank(oppRanks, "def", currentTurn));
+
+        const typeMult = getDefenderTypeMultiplier(moveData.type, defender.types);
+        const stab = hasStab(attacker.types, moveData.type) ? 1.3 : 1;
+
+        let updatedDefender = { ...defender };
+
+        // 위력이 0인 기술(상태이상/랭크 변화 전용)은 데미지를 주지 않음
+        if (moveData.power > 0) {
+          // 최종 피해량 = ((위력 + 공격력x4 + 1d10 x 공격랭크보정) x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
+          const rawDamage =
+            (moveData.power + attacker.atk * 4 + rollD10() * atkMult) * typeMult * stab -
+            defender.def * 3 * defMult;
+          const dmg = Math.max(0, Math.round(rawDamage));
+          const newHp = Math.max(0, defender.hp - dmg);
+
+          updatedDefender = { ...defender, hp: newHp };
+
+          const effectText =
+            typeMult === 0 ? " (효과가 없는 듯하다...)" :
+            typeMult > 1 ? " (효과가 굉장했다!)" :
+            typeMult < 1 ? " (효과가 별로인 듯하다...)" : "";
+          log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! ${dmg} 데미지${effectText}`);
+          events.push({ logIndex: log.length - 1, type: "hit", side: oppKey, hp: newHp, hasAttacker: true });
+        } else {
+          log.push(`${displayName(myKey, room)}의 ${moveSlot.name}!`);
+        }
+
+        // 상태이상 / 상태변화 부여 시도
+        if (moveData.effect && Math.random() < moveData.effect.chance) {
+          if (moveData.effect.status) {
+            const dn = updatedDefender.name ?? "포켓몬";
+            const statusResult = applyStatus(updatedDefender, moveData.effect.status);
+            updatedDefender = statusResult.pokemon;
+            if (statusResult.applied) {
+              log.push(`${dn}${josa(dn, "이가")} ${moveData.effect.status} 상태가 되었다!`);
+            } else if (statusResult.reason === "immune") {
+              log.push(`${dn}${josa(dn, "은는")} ${moveData.effect.status}에 걸리지 않는다!`);
+            } else if (statusResult.reason === "already") {
+              log.push(`${dn}${josa(dn, "은는")} 이미 ${moveData.effect.status} 상태다!`);
+            }
+          } else if (moveData.effect.volatile) {
+            const volName = moveData.effect.volatile;
+            const dn = updatedDefender.name ?? "포켓몬";
+            if (updatedDefender.volatiles?.[volName]) {
+              log.push(`${dn}${josa(dn, "은는")} 이미 ${volName} 상태다!`);
+            } else {
+              updatedDefender = applyVolatile(updatedDefender, volName);
+              log.push(`${dn}${josa(dn, "이가")} ${volName} 상태가 되었다!`);
+            }
+          }
+        }
+
+        entries[oppKey][activeIdx[oppKey]] = updatedDefender;
+
+        // 랭크 변화. moves.js의 rank: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? }
+        // 갱신 시점부터 turns만큼 다시 지속 시작.
+        if (moveData.rank && Math.random() < (moveData.rank.chance ?? 1)) {
+          const { turns } = moveData.rank;
+          for (const [field, { self, stat }] of Object.entries(RANK_FIELD_MAP)) {
+            const value = moveData.rank[field];
+            if (!value) continue;
+
+            const targetKey = self ? myKey : oppKey;
+            const targetRanks = targetKey === myKey ? myRanks : oppRanks;
+            const newValue = clampRank(getEffectiveRank(targetRanks, stat, currentTurn) + value);
+            const newRanks = { ...targetRanks, [stat]: { value: newValue, expireTurn: currentTurn + turns } };
+            if (targetKey === myKey) myRanks = newRanks; else oppRanks = newRanks;
+            update[`${targetKey}_ranks`] = newRanks;
+
+            const tn = entries[targetKey][activeIdx[targetKey]]?.name ?? "포켓몬";
+            const statLabel = stat === "evasion" ? "속도" : stat === "atk" ? "공격" : "방어";
+            log.push(`${tn}의 ${statLabel} 랭크가 ${value > 0 ? "올랐다" : "내려갔다"}!`);
+          }
+        }
+
+        // 전멸/교체 체크 (직접 데미지로 쓰러진 경우)
+        const faint = handleFaintSwitch(entries, oppKey, activeIdx);
+        if (faint.fainted) {
+          if (faint.allFainted) {
+            update.battle_winner = myKey;
+            log.push(`${displayName(myKey, room)} 승리!`);
+            update[`${myKey}_entry`] = entries[myKey];
+            update[`${oppKey}_entry`] = entries[oppKey];
+            update.battle_log = log;
+            update.battle_event_log = events;
+            await updateDoc(roomRef, update);
+            return;
+          }
+          update[`${oppKey}_pending_switch`] = true;
+          log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(oppKey, room)}, 교체할 포켓몬을 선택해줘`);
+          directPendingSide = oppKey;
+        }
+      }
+    }
+
     update[`${myKey}_entry`] = entries[myKey];
+    update[`${oppKey}_entry`] = entries[oppKey];
+
+    const advance = buildTurnAdvanceUpdate(
+      room, entries, activeIdx, currentTurn, log, events,
+      directPendingSide ? new Set([directPendingSide]) : undefined
+    );
+    Object.assign(update, advance);
+    update[`${myKey}_entry`] = entries[myKey];
+    update[`${oppKey}_entry`] = entries[oppKey];
+
     update.battle_log = log;
     update.battle_event_log = events;
     await updateDoc(roomRef, update);
-    return;
+  } finally {
+    actionInFlight = false;
   }
-
-  // 막혔음 (혼란 자기 공격 포함) -> 자기 자신이 쓰러졌는지 체크
-  let directPendingSide = null;
-  const faint = handleFaintSwitch(entries, myKey, activeIdx);
-  if (faint.fainted) {
-    if (faint.allFainted) {
-      update.battle_winner = oppKey;
-      log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다!`);
-      log.push(`${displayName(oppKey, room)} 승리!`);
-      update[`${myKey}_entry`] = entries[myKey];
-      update.battle_log = log;
-      update.battle_event_log = events;
-      await updateDoc(roomRef, update);
-      return;
-    }
-    update[`${myKey}_pending_switch`] = true;
-    log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(myKey, room)}, 교체할 포켓몬을 선택해줘`);
-    directPendingSide = myKey;
-  }
-
-  update[`${myKey}_entry`] = entries[myKey];
-  update[`${oppKey}_entry`] = entries[oppKey];
-
-  const advance = buildTurnAdvanceUpdate(
-    room, entries, activeIdx, currentTurn, log, events,
-    directPendingSide ? new Set([directPendingSide]) : undefined
-  );
-  Object.assign(update, advance);
-  update[`${myKey}_entry`] = entries[myKey];
-  update[`${oppKey}_entry`] = entries[oppKey];
-
-  update.battle_log = log;
-  update.battle_event_log = events;
-  await updateDoc(roomRef, update);
-}
-
-async function useMove(moveIdx) {
-  const myKey = slotKey(mySlot);
-  if (!myKey || isAnimating || forcedActionPending) return;
-
-  const snap = await getDoc(roomRef);
-  const room = snap.data();
-  if (!room || room.battle_winner) return;
-  if (room.battle_turn !== myKey) return; // 내 턴 아니면 무시
-  if (room.round_no !== resolvedForcedTurn) return; // 강제행동 체크 전이면 무시
-
-  const oppKey = myKey === "p1" ? "p2" : "p1";
-  const entries = {
-    p1: [...(room.p1_entry ?? [])],
-    p2: [...(room.p2_entry ?? [])],
-  };
-  const activeIdx = {
-    p1: room.p1_active_idx ?? 0,
-    p2: room.p2_active_idx ?? 0,
-  };
-  const currentTurn = room.round_no ?? 1;
-
-  const attacker = entries[myKey][activeIdx[myKey]];
-  const defender = entries[oppKey][activeIdx[oppKey]];
-  if (!attacker || !defender) return;
-
-  const moveSlot = attacker.moves?.[moveIdx];
-  if (!moveSlot || (moveSlot.pp ?? 0) <= 0) return; // PP 없으면 사용 불가
-
-  const moveData = MOVES[moveSlot.name];
-  if (!moveData) {
-    console.warn(`moves.js에 "${moveSlot.name}" 기술이 정의되어 있지 않음`);
-    return;
-  }
-
-  // PP 소모
-  const newMoves = [...attacker.moves];
-  newMoves[moveIdx] = { ...moveSlot, pp: moveSlot.pp - 1 };
-  entries[myKey][activeIdx[myKey]] = { ...attacker, moves: newMoves };
-
-  let myRanks = room[`${myKey}_ranks`] ?? defaultRanks();
-  let oppRanks = room[`${oppKey}_ranks`] ?? defaultRanks();
-
-  const log = [...(room.battle_log ?? [])];
-  const events = [...(room.battle_event_log ?? [])];
-  const update = {};
-  let directPendingSide = null;
-
-  const hit = rollHit(moveData, attacker, defender, oppRanks, currentTurn);
-
-  if (!hit) {
-    log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! 빗나갔다...`);
-  } else {
-    // 공격 랭크업/다운: 타입 상성 적용 "이전" 보정값으로, 1d10 굴림에만 곱해짐 (급소율에는 영향 없음)
-    // 방어 랭크업/다운: 최종 피해량 계산 이후 보정값으로, 방어력x3 항에만 곱해짐
-    const atkMult = rankMultiplier(getEffectiveRank(myRanks, "atk", currentTurn));
-    const defMult = rankMultiplier(getEffectiveRank(oppRanks, "def", currentTurn));
-
-    const typeMult = getDefenderTypeMultiplier(moveData.type, defender.types);
-    const stab = hasStab(attacker.types, moveData.type) ? 1.3 : 1;
-
-    // 최종 피해량 = ((위력 + 공격력x4 + 1d10 x 공격랭크보정) x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
-    const rawDamage =
-      (moveData.power + attacker.atk * 4 + rollD10() * atkMult) * typeMult * stab -
-      defender.def * 3 * defMult;
-    const dmg = Math.max(0, Math.round(rawDamage));
-    const newHp = Math.max(0, defender.hp - dmg);
-
-    let updatedDefender = { ...defender, hp: newHp };
-
-    const effectText =
-      typeMult === 0 ? " (효과가 없는 듯하다...)" :
-      typeMult > 1 ? " (효과가 굉장했다!)" :
-      typeMult < 1 ? " (효과가 별로인 듯하다...)" : "";
-    log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! ${dmg} 데미지${effectText}`);
-    events.push({ logIndex: log.length - 1, type: "hit", side: oppKey, hp: newHp, hasAttacker: true });
-
-    // 상태이상 / 상태변화 부여 시도
-    if (moveData.effect && Math.random() < moveData.effect.chance) {
-      if (moveData.effect.status) {
-        const before = updatedDefender.status;
-        updatedDefender = applyStatus(updatedDefender, moveData.effect.status);
-        if (updatedDefender.status !== before) {
-          const dn = updatedDefender.name ?? "포켓몬";
-          log.push(`${dn}${josa(dn, "이가")} ${moveData.effect.status} 상태가 되었다!`);
-        }
-      } else if (moveData.effect.volatile) {
-        const volName = moveData.effect.volatile;
-        const dn = updatedDefender.name ?? "포켓몬";
-        if (updatedDefender.volatiles?.[volName]) {
-          log.push(`${dn}${josa(dn, "은는")} 이미 ${volName} 상태다!`);
-        } else {
-          updatedDefender = applyVolatile(updatedDefender, volName);
-          log.push(`${dn}${josa(dn, "이가")} ${volName} 상태가 되었다!`);
-        }
-      }
-    }
-
-    entries[oppKey][activeIdx[oppKey]] = updatedDefender;
-
-    // 랭크 변화. moves.js의 rank: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? }
-    // 갱신 시점부터 turns만큼 다시 지속 시작.
-    if (moveData.rank && Math.random() < (moveData.rank.chance ?? 1)) {
-      const { turns } = moveData.rank;
-      for (const [field, { self, stat }] of Object.entries(RANK_FIELD_MAP)) {
-        const value = moveData.rank[field];
-        if (!value) continue;
-
-        const targetKey = self ? myKey : oppKey;
-        const targetRanks = targetKey === myKey ? myRanks : oppRanks;
-        const newValue = clampRank(getEffectiveRank(targetRanks, stat, currentTurn) + value);
-        const newRanks = { ...targetRanks, [stat]: { value: newValue, expireTurn: currentTurn + turns } };
-        if (targetKey === myKey) myRanks = newRanks; else oppRanks = newRanks;
-        update[`${targetKey}_ranks`] = newRanks;
-
-        const tn = entries[targetKey][activeIdx[targetKey]]?.name ?? "포켓몬";
-        const statLabel = stat === "evasion" ? "속도" : stat === "atk" ? "공격" : "방어";
-        log.push(`${tn}의 ${statLabel} 랭크가 ${value > 0 ? "올랐다" : "내려갔다"}!`);
-      }
-    }
-
-    // 전멸/교체 체크 (직접 데미지로 쓰러진 경우)
-    const faint = handleFaintSwitch(entries, oppKey, activeIdx);
-    if (faint.fainted) {
-      if (faint.allFainted) {
-        update.battle_winner = myKey;
-        log.push(`${displayName(myKey, room)} 승리!`);
-        update[`${myKey}_entry`] = entries[myKey];
-        update[`${oppKey}_entry`] = entries[oppKey];
-        update.battle_log = log;
-        update.battle_event_log = events;
-        await updateDoc(roomRef, update);
-        return;
-      }
-      update[`${oppKey}_pending_switch`] = true;
-      log.push(`${faint.name}${josa(faint.name, "이가")} 쓰러졌다! ${displayName(oppKey, room)}, 교체할 포켓몬을 선택해줘`);
-      directPendingSide = oppKey;
-    }
-  }
-
-  update[`${myKey}_entry`] = entries[myKey];
-  update[`${oppKey}_entry`] = entries[oppKey];
-
-  const advance = buildTurnAdvanceUpdate(
-    room, entries, activeIdx, currentTurn, log, events,
-    directPendingSide ? new Set([directPendingSide]) : undefined
-  );
-  Object.assign(update, advance);
-  update[`${myKey}_entry`] = entries[myKey];
-  update[`${oppKey}_entry`] = entries[oppKey];
-
-  update.battle_log = log;
-  update.battle_event_log = events;
-  await updateDoc(roomRef, update);
 }
 
 // 벤치 포켓몬 교체.
@@ -620,9 +569,8 @@ async function switchPokemon(targetIdx) {
   const pendingSwitch = !!room[`${myKey}_pending_switch`];
 
   if (!pendingSwitch) {
-    // 자발적 교체: 내 턴이고, 강제행동 체크가 끝났을 때만 가능
+    // 자발적 교체: 내 턴일 때만 가능
     if (room.battle_turn !== myKey) return;
-    if (forcedActionPending || room.round_no !== resolvedForcedTurn) return;
   }
 
   const entries = { p1: [...(room.p1_entry ?? [])], p2: [...(room.p2_entry ?? [])] };
@@ -852,8 +800,7 @@ function renderMoveButtons(room) {
       room.battle_turn === myKey &&
       !room.battle_winner &&
       !isAnimating &&
-      !forcedActionPending &&
-      room.round_no === resolvedForcedTurn;
+      !actionInFlight;
     const usable = canAct && (move.pp ?? 0) > 0;
 
     const moveData = MOVES[move.name];
@@ -894,9 +841,8 @@ function renderBenchSide(dataKey, uiKey, room) {
     !anyonePending &&
     !room.battle_winner &&
     !isAnimating &&
-    !forcedActionPending &&
-    room.battle_turn === dataKey &&
-    room.round_no === resolvedForcedTurn;
+    !actionInFlight &&
+    room.battle_turn === dataKey;
 
   container.innerHTML = "";
   container.style.flexWrap = "wrap";
@@ -1122,10 +1068,6 @@ function renderTurn(room) {
 
   if (!room.battle_turn) {
     el.innerText = "선공 결정 중...";
-    return;
-  }
-  if (forcedActionPending || room.round_no !== resolvedForcedTurn) {
-    el.innerText = "상태 확인 중...";
     return;
   }
   el.innerText = `${displayName(room.battle_turn, room)}의 턴`;

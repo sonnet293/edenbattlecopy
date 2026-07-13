@@ -45,14 +45,15 @@ export function formatPokemonName(pokemon) {
   return pokemon.status ? `${pokemon.name} [${pokemon.status}]` : pokemon.name;
 }
 
-// 상태이상 부여 시도. 면역이거나 이미 상태이상이 있으면 변화 없이 그대로 반환.
+// 상태이상 부여 시도. 면역이거나 이미 상태이상이 있으면 적용하지 않고 사유(reason)를 함께 반환.
+// 반환: { pokemon: 갱신된(또는 그대로인) 포켓몬, applied: boolean, reason: null | "immune" | "already" }
 export function applyStatus(pokemon, statusName) {
-  if (!STATUS_LIST.includes(statusName)) return pokemon;
-  if (pokemon.status) return pokemon; // 상태이상끼리는 중첩 불가
-  if (isImmuneToStatus(pokemon, statusName)) return pokemon;
-  
+  if (!STATUS_LIST.includes(statusName)) return { pokemon, applied: false, reason: null };
+  if (pokemon.status) return { pokemon, applied: false, reason: "already" }; // 상태이상끼리는 중첩 불가
+  if (isImmuneToStatus(pokemon, statusName)) return { pokemon, applied: false, reason: "immune" };
+
   const statusData = statusName === "얼음" ? { freezeTurn: 0 } : {};
-  return { ...pokemon, status: statusName, statusData };
+  return { pokemon: { ...pokemon, status: statusName, statusData }, applied: true, reason: null };
 }
 
 // 상태변화 부여 시도. 같은 종류의 상태변화가 이미 있으면 변화 없이 그대로 반환.
@@ -103,7 +104,7 @@ function freezeReleaseChance(freezeTurn) {
   return 0.65; // 4턴째 이후 고정
 }
 
-// 자신의 턴이 시작될 때(기술 선택 전) 호출. 얼음/마비/풀죽음으로 행동 불가능한지 체크.
+// 기술을 선택한 직후 호출. 얼음/마비/풀죽음으로 행동 불가능한지 체크.
 // 반환: { canAct: boolean, pokemon: 갱신된 포켓몬, message }
 export function checkActionPrevented(pokemon) {
   if (pokemon.status === "얼음") {

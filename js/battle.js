@@ -823,10 +823,12 @@ function renderBenchSide(dataKey, uiKey, room) {
 }
 
 const LOG_MAX_LINES = 8;
-const LOG_TYPE_SPEED_MS = 25;
+const LOG_TYPE_CHAR_MS = 18; // 한 글자 타이핑 간격
+const LOG_TYPE_GAP_MS = 80; // 한 줄 다 찍힌 후 다음 줄 시작 전 여백
 let renderedLogCount = 0; // 지금까지 화면에 반영한 로그 줄 수 (신규 줄만 타이핑하기 위한 기준)
 let logInitialized = false; // 최초 진입/재접속 시엔 타이핑 없이 즉시 표시
-let logTypingChain = Promise.resolve(); // 여러 줄이 한 번에 추가돼도 순서대로 타이핑되도록 직렬화
+let logTypingQueue = []; // 타이핑을 기다리는 줄들
+let logIsTyping = false;
 
 function trimLogLines(el) {
   while (el.children.length > LOG_MAX_LINES) {
@@ -841,32 +843,43 @@ function appendLogLineInstant(el, text) {
   trimLogLines(el);
 }
 
-function typeLogLine(el, text) {
-  return new Promise((resolve) => {
-    const div = document.createElement("div");
-    el.appendChild(div);
-    let i = 0;
-    const timer = setInterval(() => {
-      i++;
-      div.textContent = text.slice(0, i);
-      el.scrollTop = el.scrollHeight;
-      if (i >= text.length) {
-        clearInterval(timer);
-        trimLogLines(el);
-        resolve();
-      }
-    }, LOG_TYPE_SPEED_MS);
-  });
+function processLogQueue() {
+  if (logIsTyping || logTypingQueue.length === 0) return;
+  const el = document.getElementById("battle-log");
+  if (!el) { logTypingQueue.length = 0; return; }
+
+  logIsTyping = true;
+  const text = logTypingQueue.shift();
+  const div = document.createElement("div");
+  el.appendChild(div);
+
+  const chars = [...text];
+  let i = 0;
+  function typeNext() {
+    if (i >= chars.length) {
+      trimLogLines(el);
+      logIsTyping = false;
+      setTimeout(processLogQueue, LOG_TYPE_GAP_MS);
+      return;
+    }
+    div.textContent += chars[i++];
+    el.scrollTop = el.scrollHeight;
+    setTimeout(typeNext, LOG_TYPE_CHAR_MS);
+  }
+  typeNext();
 }
 
 function renderLog(log = []) {
   const el = document.getElementById("battle-log");
+  if (!el) return;
 
   if (log.length < renderedLogCount) {
     // 새 전투 등으로 로그가 리셋된 경우
     el.innerHTML = "";
     renderedLogCount = 0;
     logInitialized = false;
+    logTypingQueue = [];
+    logIsTyping = false;
   }
 
   if (!logInitialized) {
@@ -884,11 +897,8 @@ function renderLog(log = []) {
   const newLines = log.slice(renderedLogCount);
   renderedLogCount = log.length;
 
-  logTypingChain = logTypingChain.then(async () => {
-    for (const line of newLines) {
-      await typeLogLine(el, line);
-    }
-  });
+  logTypingQueue.push(...newLines);
+  processLogQueue();
 }
 
 function renderTurn(room) {

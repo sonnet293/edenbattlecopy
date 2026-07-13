@@ -1,0 +1,134 @@
+/* 포켓몬 패널 (적군/아군) */
+.pokemon-pannel,
+.pokemon-panel {
+  width: 100%;
+  max-width: 240px;
+  padding: 7px 14px 8px;
+  box-sizing: border-box;
+  border: 1.5px solid #555;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 58%;
+}
+
+.hp-text {
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+/* HP바 */
+.hp-bar-bg {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.hp-bar {
+  height: 100%;
+  width: 100%;
+  background: #4caf50; /* 초록: 평상시 (updateHpBar가 실시간으로 색을 바꿈) */
+  border-radius: 999px;
+  transition: width 0.5s ease, background-color 0.4s ease;
+}
+
+/* 포트레이트 */
+.portrait-img {
+  display: none;
+  max-width: 100%;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.portrait-img.visible {
+  opacity: 1;
+}
+
+.portrait-img.visible.fainted {
+  opacity: 0.35;
+}
+
+@keyframes slideInMine {
+  from { transform: translateX(40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInEnemy {
+  from { transform: translateX(-40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.portrait-img.slide-in-mine {
+  animation: slideInMine 0.4s ease;
+}
+
+.portrait-img.slide-in-enemy {
+  animation: slideInEnemy 0.4s ease;
+}
+
+/* 전투 연출 */
+@keyframes attackerFlash {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.8); }
+}
+
+@keyframes defenderHit {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  50% { transform: translateX(6px); }
+  75% { transform: translateX(-3px); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes screenShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+@keyframes blinkDamage {
+  0%, 100% { opacity: 1; }
+  25%, 75% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.pokemon-pannel.attacker-flash,
+.pokemon-panel.attacker-flash {
+  animation: attackerFlash 0.25s ease;
+}
+
+.pokemon-pannel.defender-hit,
+.pokemon-panel.defender-hit {
+  animation: defenderHit 0.3s ease;
+}
+
+.pokemon-pannel.blink-damage,
+.pokemon-panel.blink-damage {
+  animation: blinkDamage 0.4s ease;
+}
+
+#battle-wrapper.screen-shake {
+  animation: screenShake 0.3s ease;
+}

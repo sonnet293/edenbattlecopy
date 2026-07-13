@@ -8,23 +8,24 @@
 </head>
 <body>
   
-  <div class="battle-wrap">
+  <div class="battle-wrap" id="battle-wrapper">
     <!--적군 섹션-->
-    <div class="pokemon-pannel opponent">
+    <div class="pokemon-pannel opponent" id="enemy-pokemon-area">
       <div class="portrait-placeholder" id="enemy-portrait-placeholder"></div>
       <img id="enemy-portrait" class="portrait-img">
-      <span class="name" id="enemy-name">적군</span>
-      <span class="hp-text" id="enemy-hp">-</span>
+      <div class="panel-header">
+        <span class="name" id="enemy-name">적군</span>
+        <span class="hp-text" id="enemy-hp">-</span>
+      </div>
       <div class="hp-bar-bg">
         <div class="hp-bar" id="enemy-hp-bar"></div>
       </div>
       <div class="stats" id="enemy-stats"></div>
       <div class="bench-list" id="enemy-bench"></div>
     </div>
-  </div>
 
-  <!--아군 섹션-->
-  <div class="pokemon-panel mine">
+    <!--아군 섹션-->
+    <div class="pokemon-panel mine" id="mine-pokemon-area">
       <div class="portrait-wrap">
 
         <div class="portrait-placeholder" id="mine-portrait-placeholder"></div>
@@ -44,6 +45,7 @@
         <div class="bench-list" id="mine-bench"></div>
       </div>
     </div>
+  </div>
 
   <div class="dice-row" id="diceRow">
     <div class="dice-name" id="dice-mine-name">아군</div>
@@ -55,6 +57,8 @@
   <div class="turn-indicator" id="turn-indicator"></div>
 
   <div class="result" id="result"></div>
+
+  <button id="leaveBtn" style="display:none;">LEAVE</button>
 
   <div class="move-grid">
     <button class="move-btn" id="moveBtn0" style="display: none;"></button>

@@ -42,6 +42,30 @@ const TYPE_COLORS = {
 // 랭크 -3 ~ +3 -> 배율 0.7 ~ 1.3 (공격/방어/회피 공통)
 const RANK_MULT_TABLE = [0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3];
 
+// leaveBattle()에서 전투 종료 후 다음 게임을 위해 되돌릴 필드들
+const BATTLE_RESET_FIELDS = {
+  game_started: false,
+  game_started_at: null,
+  player1_ready: false,
+  player2_ready: false,
+  p1_entry: null,
+  p2_entry: null,
+  p1_active_idx: 0,
+  p2_active_idx: 0,
+  p1_pending_switch: false,
+  p2_pending_switch: false,
+  p1_ranks: null,
+  p2_ranks: null,
+  battle_turn: null,
+  round_first: null,
+  round_no: 0,
+  p1_roll: null,
+  p2_roll: null,
+  battle_log: [],
+  battle_event_log: [],
+  battle_winner: null,
+};
+
 let myUid = null;
 let mySlot = null; // "player1" | "player2" | "spectator" | null
 let roundInitInFlight = false; // player1의 첫 주사위 굴리기 중복 방지용 가드
@@ -189,7 +213,7 @@ function handleFaintSwitch(entries, sideKey, activeIdx) {
 //   - 이미 호출하는 쪽(useMove/resolveForcedActionAsync)에서 pending_switch 플래그와 로그를 다 찍었으므로
 //     여기서는 중복으로 다시 찍지 않고, 그냥 라운드 진행을 멈추기만 함.
 // entries/activeIdx를 직접 변경하며, log에 메시지를 push함.
-function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, alreadyPendingSides = new Set()) {
+function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, events, alreadyPendingSides = new Set()) {
   const update = {};
 
   if (alreadyPendingSides.size > 0) {
@@ -212,6 +236,7 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, alre
     if (tick.damage > 0) {
       entries[side][activeIdx[side]] = tick.pokemon;
       log.push(tick.message);
+      events.push({ logIndex: log.length - 1, type: "hit", side, hp: tick.pokemon.hp, hasAttacker: false });
     }
   }
 
@@ -319,6 +344,7 @@ async function maybeInitRound(room) {
     p1_pending_switch: false,
     p2_pending_switch: false,
     battle_log: [`턴 1 시작! ${displayName(first, room)} 선공`],
+    battle_event_log: [],
   });
 }
 
@@ -359,6 +385,7 @@ async function resolveForcedActionAsync(myKey) {
   if (!pkmn) return;
 
   const log = [...(room.battle_log ?? [])];
+  const events = [...(room.battle_event_log ?? [])];
   const update = {};
 
   const gate = checkActionPrevented(pkmn);
@@ -370,7 +397,10 @@ async function resolveForcedActionAsync(myKey) {
     const confusion = checkConfusionInterrupt(pkmn);
     pkmn = confusion.pokemon;
     if (confusion.message) log.push(confusion.message);
-    if (confusion.confused) blocked = true;
+    if (confusion.confused) {
+      blocked = true;
+      events.push({ logIndex: log.length - 1, type: "hit", side: myKey, hp: confusion.pokemon.hp, hasAttacker: false });
+    }
   }
 
   entries[myKey][activeIdx[myKey]] = pkmn;
@@ -380,6 +410,7 @@ async function resolveForcedActionAsync(myKey) {
     // 행동 가능해짐 (얼음 풀림 / 마비 통과 / 혼란 회복 등) - 엔트리만 갱신, 턴은 그대로 둠
     update[`${myKey}_entry`] = entries[myKey];
     update.battle_log = log;
+    update.battle_event_log = events;
     await updateDoc(roomRef, update);
     return;
   }
@@ -394,6 +425,7 @@ async function resolveForcedActionAsync(myKey) {
       log.push(`${displayName(oppKey, room)} 승리!`);
       update[`${myKey}_entry`] = entries[myKey];
       update.battle_log = log;
+      update.battle_event_log = events;
       await updateDoc(roomRef, update);
       return;
     }
@@ -406,7 +438,7 @@ async function resolveForcedActionAsync(myKey) {
   update[`${oppKey}_entry`] = entries[oppKey];
 
   const advance = buildTurnAdvanceUpdate(
-    room, entries, activeIdx, currentTurn, log,
+    room, entries, activeIdx, currentTurn, log, events,
     directPendingSide ? new Set([directPendingSide]) : undefined
   );
   Object.assign(update, advance);
@@ -414,6 +446,7 @@ async function resolveForcedActionAsync(myKey) {
   update[`${oppKey}_entry`] = entries[oppKey];
 
   update.battle_log = log;
+  update.battle_event_log = events;
   await updateDoc(roomRef, update);
 }
 
@@ -460,6 +493,7 @@ async function useMove(moveIdx) {
   let oppRanks = room[`${oppKey}_ranks`] ?? defaultRanks();
 
   const log = [...(room.battle_log ?? [])];
+  const events = [...(room.battle_event_log ?? [])];
   const update = {};
   let directPendingSide = null;
 
@@ -490,6 +524,7 @@ async function useMove(moveIdx) {
       typeMult > 1 ? " (효과가 굉장했다!)" :
       typeMult < 1 ? " (효과가 별로인 듯하다...)" : "";
     log.push(`${displayName(myKey, room)}의 ${moveSlot.name}! ${dmg} 데미지${effectText}`);
+    events.push({ logIndex: log.length - 1, type: "hit", side: oppKey, hp: newHp, hasAttacker: true });
 
     // 상태이상 / 상태변화 부여 시도
     if (moveData.effect && Math.random() < moveData.effect.chance) {
@@ -544,6 +579,7 @@ async function useMove(moveIdx) {
         update[`${myKey}_entry`] = entries[myKey];
         update[`${oppKey}_entry`] = entries[oppKey];
         update.battle_log = log;
+        update.battle_event_log = events;
         await updateDoc(roomRef, update);
         return;
       }
@@ -557,7 +593,7 @@ async function useMove(moveIdx) {
   update[`${oppKey}_entry`] = entries[oppKey];
 
   const advance = buildTurnAdvanceUpdate(
-    room, entries, activeIdx, currentTurn, log,
+    room, entries, activeIdx, currentTurn, log, events,
     directPendingSide ? new Set([directPendingSide]) : undefined
   );
   Object.assign(update, advance);
@@ -565,6 +601,7 @@ async function useMove(moveIdx) {
   update[`${oppKey}_entry`] = entries[oppKey];
 
   update.battle_log = log;
+  update.battle_event_log = events;
   await updateDoc(roomRef, update);
 }
 
@@ -601,6 +638,7 @@ async function switchPokemon(targetIdx) {
 
   const update = {};
   const log = [...(room.battle_log ?? [])];
+  const events = [...(room.battle_event_log ?? [])];
 
   update[`${myKey}_active_idx`] = targetIdx;
   update[`${myKey}_ranks`] = defaultRanks(); // 교체하면 랭크 초기화
@@ -608,6 +646,7 @@ async function switchPokemon(targetIdx) {
   if (pendingSwitch) {
     update[`${myKey}_pending_switch`] = false;
     log.push(`${displayName(myKey, room)}, 이어서 ${formatPokemonName(target)} 출전!`);
+    events.push({ logIndex: log.length - 1, type: "switch", side: myKey, idx: targetIdx });
 
     const oppKey = myKey === "p1" ? "p2" : "p1";
     const oppStillPending = !!room[`${oppKey}_pending_switch`];
@@ -625,21 +664,68 @@ async function switchPokemon(targetIdx) {
     }
 
     update.battle_log = log;
+    update.battle_event_log = events;
     await updateDoc(roomRef, update);
     return;
   }
 
   // 자발적 교체는 내 턴(액션)을 소모함
   log.push(`${displayName(myKey, room)}, ${formatPokemonName(prevPkmn)} 돌아와! ${formatPokemonName(target)} 출전!`);
+  events.push({ logIndex: log.length - 1, type: "switch", side: myKey, idx: targetIdx });
 
   const oppKeyForAdvance = myKey === "p1" ? "p2" : "p1";
-  const advance = buildTurnAdvanceUpdate(room, entries, activeIdx, room.round_no ?? 1, log);
+  const advance = buildTurnAdvanceUpdate(room, entries, activeIdx, room.round_no ?? 1, log, events);
   Object.assign(update, advance);
   update[`${myKey}_entry`] = entries[myKey];
   update[`${oppKeyForAdvance}_entry`] = entries[oppKeyForAdvance];
 
   update.battle_log = log;
+  update.battle_event_log = events;
   await updateDoc(roomRef, update);
+}
+
+// 전투 종료 후 LEAVE 버튼 클릭 시: 내 슬롯을 비우고(관전자가 있으면 그 자리로 승격) 다음 게임을 위해 전투 필드를 초기화한 뒤 로비로 이동.
+async function leaveBattle() {
+  const snap = await getDoc(roomRef);
+  const room = snap.data();
+  if (!room || !room.battle_winner) return; // 전투가 끝났을 때만 나갈 수 있음
+
+  const update = { ...BATTLE_RESET_FIELDS };
+  const spectators = room.spectators ?? [];
+  const spectatorNames = room.spectator_names ?? [];
+
+  if (mySlot === "player1" || mySlot === "player2") {
+    if (spectators.length > 0) {
+      const randIdx = Math.floor(Math.random() * spectators.length);
+      update[`${mySlot}_uid`] = spectators[randIdx];
+      update[`${mySlot}_name`] = spectatorNames[randIdx];
+      update.spectators = spectators.filter((_, i) => i !== randIdx);
+      update.spectator_names = spectatorNames.filter((_, i) => i !== randIdx);
+    } else {
+      update[`${mySlot}_uid`] = null;
+      update[`${mySlot}_name`] = null;
+    }
+  } else if (mySlot === "spectator") {
+    const idx = spectators.indexOf(myUid);
+    if (idx >= 0) {
+      update.spectators = spectators.filter((_, i) => i !== idx);
+      update.spectator_names = spectatorNames.filter((_, i) => i !== idx);
+    }
+  }
+
+  await updateDoc(roomRef, update);
+  const roomNumber = ROOM_ID.replace("battleroom", "");
+  location.href = `../pages/battleroom${roomNumber}.html`;
+}
+
+function renderLeaveButton(room) {
+  const btn = document.getElementById("leaveBtn");
+  if (!btn) return;
+  btn.style.display = room.battle_winner ? "inline-block" : "none";
+  btn.onclick = () => {
+    playButtonSound();
+    leaveBattle();
+  };
 }
 
 function renderBoard(room) {
@@ -654,11 +740,9 @@ function renderBoard(room) {
   document.getElementById("dice-mine-name").innerText = mineLabel;
   document.getElementById("dice-enemy-name").innerText = enemyLabel;
 
-  renderPokemon("mine", room[`${mineKey}_entry`], room[`${mineKey}_active_idx`] ?? 0);
-  renderPokemon("enemy", room[`${enemyKey}_entry`], room[`${enemyKey}_active_idx`] ?? 0);
-
-  renderLog(room.battle_log);
+  renderLogAndBoard(room);
   renderResult(room);
+  renderLeaveButton(room);
 }
 
 function renderTurnUI(room) {
@@ -667,39 +751,79 @@ function renderTurnUI(room) {
   renderBench(room);
 }
 
-function renderPokemon(key, entry, idx) {
-  const pkmn = entry?.[idx];
-  const hpText = document.getElementById(`${key}-hp`);
-  const hpBar = document.getElementById(`${key}-hp-bar`);
-  const stats = document.getElementById(`${key}-stats`);
-  const portrait = document.getElementById(`${key}-portrait`);
+// HP바 하나를 지정된 색상 구간(초록/주황/빨강)으로 갱신. showNumbers가 false면 텍스트는 비워둠(적군 HP 숨김 등에 사용 가능).
+function updateHpBar(barId, textId, hp, maxHp, showNumbers) {
+  const bar = document.getElementById(barId), txt = textId ? document.getElementById(textId) : null;
+  if (!bar) return;
+  const pct = maxHp > 0 ? Math.max(0, Math.min(100, (hp / maxHp) * 100)) : 0;
+  bar.style.width = pct + "%";
+  bar.style.backgroundColor = pct > 50 ? "#4caf50" : pct > 20 ? "#ff9800" : "#f44336";
+  if (txt) txt.innerText = showNumbers ? `HP: ${hp} / ${maxHp}` : "";
+}
+
+// mine/enemy 포트레이트를 갱신. animate가 true면 등장 슬라이드 애니메이션을 재생(교체 시에만 사용).
+function updatePortrait(prefix, pokemon, animate = false) {
+  const img = document.getElementById(`${prefix}-portrait`);
+  const placeholder = document.getElementById(`${prefix}-portrait-placeholder`);
+  if (!img) return;
+  if (!pokemon?.portrait) {
+    img.classList.remove("visible"); img.style.display = "none";
+    if (placeholder) placeholder.style.display = "block"; return;
+  }
+  if (placeholder) placeholder.style.display = "none";
+  img.classList.remove("visible", "slide-in-mine", "slide-in-enemy");
+  img.style.display = "block"; img.src = pokemon.portrait; img.alt = pokemon.name;
+  setTimeout(() => {
+    img.classList.add("visible", ...(animate ? [prefix === "mine" ? "slide-in-mine" : "slide-in-enemy"] : []));
+  }, 80);
+}
+
+// 공격 연출: 공격자 플래시 + 화면 흔들림 + (짧은 딜레이 후) 피격자 흔들림
+function triggerAttackEffect(atkPfx, defPfx) {
+  return new Promise(resolve => {
+    const atkArea = document.getElementById(`${atkPfx}-pokemon-area`);
+    const defArea = document.getElementById(`${defPfx}-pokemon-area`);
+    const wrapper = document.getElementById("battle-wrapper");
+    if (atkArea) { atkArea.classList.add("attacker-flash"); atkArea.addEventListener("animationend", () => atkArea.classList.remove("attacker-flash"), { once: true }); }
+    if (wrapper) { wrapper.classList.add("screen-shake"); wrapper.addEventListener("animationend", () => wrapper.classList.remove("screen-shake"), { once: true }); }
+    setTimeout(() => {
+      if (defArea) { defArea.classList.add("defender-hit"); defArea.addEventListener("animationend", () => { defArea.classList.remove("defender-hit"); resolve(); }, { once: true }); }
+      else resolve();
+    }, 120);
+  });
+}
+
+// 도트 데미지(독/화상) 등 공격자가 없는 피해에 쓰는 단순 깜빡임 연출
+function triggerBlink(prefix) {
+  return new Promise(resolve => {
+    const area = document.getElementById(`${prefix}-pokemon-area`);
+    if (!area) { resolve(); return; }
+    area.classList.add("blink-damage");
+    area.addEventListener("animationend", () => { area.classList.remove("blink-damage"); resolve(); }, { once: true });
+  });
+}
+
+// mine/enemy 패널의 HP바/스탯/초상화를 즉시(연출 없이) 채워 넣음.
+// 슬라이드 인 연출이 필요하면 호출부에서 updatePortrait(side, pkmn, true)를 따로 호출한다.
+function applyPokemonVisual(side, pkmn, idx) {
+  const hpText = document.getElementById(`${side}-hp`);
+  const hpBar = document.getElementById(`${side}-hp-bar`);
+  const stats = document.getElementById(`${side}-stats`);
   if (!hpText || !hpBar || !stats) return;
 
   if (!pkmn) {
     hpText.innerText = "-";
     hpBar.style.width = "0%";
     stats.innerText = "";
-    if (portrait) portrait.style.visibility = "hidden";
+    updatePortrait(side, null);
     return;
   }
 
-  hpText.innerText = `${pkmn.hp} / ${pkmn.maxHp}`;
-  const pct = Math.max(0, Math.round((pkmn.hp / pkmn.maxHp) * 100));
-  hpBar.style.width = pct + "%";
-  hpBar.classList.toggle("low", pct <= 25);
-
+  updateHpBar(`${side}-hp-bar`, `${side}-hp`, pkmn.hp, pkmn.maxHp, true);
   stats.innerText = `${formatPokemonName(pkmn)}  ATK ${pkmn.atk}  DEF ${pkmn.def}  SPD ${pkmn.spd}`;
 
-  if (portrait) {
-    if (pkmn.portrait) {
-      portrait.src = pkmn.portrait;
-      portrait.alt = pkmn.name ?? "";
-      portrait.style.visibility = "visible";
-    } else {
-      portrait.style.visibility = "hidden";
-    }
-    portrait.style.opacity = pkmn.hp <= 0 ? "0.35" : "1";
-  }
+  const portrait = document.getElementById(`${side}-portrait`);
+  if (portrait) portrait.classList.toggle("fainted", pkmn.hp <= 0);
 }
 
 // 내 활성 포켓몬의 기술로 빈 버튼(moveBtn0~3)을 채움
@@ -822,13 +946,18 @@ function renderBenchSide(dataKey, uiKey, room) {
   container.style.display = "flex";
 }
 
+// ---- 로그 타이핑 + 전투 연출 시퀀서 ----
+// battle_log(대사 한 줄씩)와 battle_event_log(그 줄에 달린 연출: 피격/교체)를 함께 받아서
+// "로그 한 줄 타이핑 -> (그 줄에 연출이 달려 있으면 재생 + HP바 반영) -> 다음 줄" 순서로 재생한다.
 const LOG_MAX_LINES = 8;
 const LOG_TYPE_CHAR_MS = 18; // 한 글자 타이핑 간격
-const LOG_TYPE_GAP_MS = 80; // 한 줄 다 찍힌 후 다음 줄 시작 전 여백
-let renderedLogCount = 0; // 지금까지 화면에 반영한 로그 줄 수 (신규 줄만 타이핑하기 위한 기준)
-let logInitialized = false; // 최초 진입/재접속 시엔 타이핑 없이 즉시 표시
-let logTypingQueue = []; // 타이핑을 기다리는 줄들
-let logIsTyping = false;
+const LOG_TYPE_GAP_MS = 80; // 한 스텝 끝난 후 다음 스텝 시작 전 여백
+
+let renderedLogCount = 0; // 지금까지 큐에 반영한 로그 줄 수
+let renderedEventCount = 0; // 지금까지 큐에 반영한 연출 이벤트 수
+let boardInitialized = false; // 최초 진입/재접속 시엔 연출 없이 즉시 표시
+let boardQueue = []; // { kind: "log", text } | { kind: "hit"|"switch", side, pkmn, idx, hasAttacker? }
+let boardBusy = false;
 
 function trimLogLines(el) {
   while (el.children.length > LOG_MAX_LINES) {
@@ -843,13 +972,10 @@ function appendLogLineInstant(el, text) {
   trimLogLines(el);
 }
 
-function processLogQueue() {
-  if (logIsTyping || logTypingQueue.length === 0) return;
+function typeLogLine(text, onDone) {
   const el = document.getElementById("battle-log");
-  if (!el) { logTypingQueue.length = 0; return; }
+  if (!el) { onDone(); return; }
 
-  logIsTyping = true;
-  const text = logTypingQueue.shift();
   const div = document.createElement("div");
   el.appendChild(div);
 
@@ -858,8 +984,7 @@ function processLogQueue() {
   function typeNext() {
     if (i >= chars.length) {
       trimLogLines(el);
-      logIsTyping = false;
-      setTimeout(processLogQueue, LOG_TYPE_GAP_MS);
+      onDone();
       return;
     }
     div.textContent += chars[i++];
@@ -869,36 +994,112 @@ function processLogQueue() {
   typeNext();
 }
 
-function renderLog(log = []) {
+function processBoardQueue() {
+  if (boardBusy || boardQueue.length === 0) return;
+  boardBusy = true;
+  const step = boardQueue.shift();
+  const next = () => {
+    boardBusy = false;
+    setTimeout(processBoardQueue, LOG_TYPE_GAP_MS);
+  };
+
+  if (step.kind === "log") {
+    typeLogLine(step.text, next);
+    return;
+  }
+
+  if (step.kind === "hit") {
+    const atkSide = step.side === "mine" ? "enemy" : "mine";
+    const playEffect = step.hasAttacker ? triggerAttackEffect(atkSide, step.side) : triggerBlink(step.side);
+    playEffect.then(() => {
+      applyPokemonVisual(step.side, step.pkmn, step.idx);
+      next();
+    });
+    return;
+  }
+
+  if (step.kind === "switch") {
+    updatePortrait(step.side, step.pkmn, true);
+    applyPokemonVisual(step.side, step.pkmn, step.idx);
+    setTimeout(next, 400); // 슬라이드 인 연출 재생 시간만큼 대기
+    return;
+  }
+
+  next();
+}
+
+// room 스냅샷 -> 로그/연출 재생 큐 구성. 최초 렌더는 즉시 전부 표시하고,
+// 그 이후엔 새로 추가된 줄만 한 줄씩, 해당 줄에 달린 연출과 함께 순서대로 재생한다.
+function renderLogAndBoard(room) {
   const el = document.getElementById("battle-log");
   if (!el) return;
+
+  const log = room.battle_log ?? [];
+  const events = room.battle_event_log ?? [];
 
   if (log.length < renderedLogCount) {
     // 새 전투 등으로 로그가 리셋된 경우
     el.innerHTML = "";
     renderedLogCount = 0;
-    logInitialized = false;
-    logTypingQueue = [];
-    logIsTyping = false;
+    renderedEventCount = 0;
+    boardInitialized = false;
+    boardQueue = [];
+    boardBusy = false;
   }
 
-  if (!logInitialized) {
-    // 최초 렌더링(또는 재접속)은 기존 로그를 즉시 표시
+  const { mineKey, enemyKey } = perspectiveKeys();
+  const mineIdx = room[`${mineKey}_active_idx`] ?? 0;
+  const enemyIdx = room[`${enemyKey}_active_idx`] ?? 0;
+  const minePkmn = room[`${mineKey}_entry`]?.[mineIdx] ?? null;
+  const enemyPkmn = room[`${enemyKey}_entry`]?.[enemyIdx] ?? null;
+
+  if (!boardInitialized) {
+    // 최초 렌더링(또는 재접속)은 기존 로그/보드를 연출 없이 즉시 표시
     el.innerHTML = "";
     log.slice(-LOG_MAX_LINES).forEach((line) => appendLogLineInstant(el, line));
     el.scrollTop = el.scrollHeight;
     renderedLogCount = log.length;
-    logInitialized = true;
+    renderedEventCount = events.length;
+
+    applyPokemonVisual("mine", minePkmn, mineIdx);
+    updatePortrait("mine", minePkmn, false);
+    applyPokemonVisual("enemy", enemyPkmn, enemyIdx);
+    updatePortrait("enemy", enemyPkmn, false);
+
+    boardInitialized = true;
     return;
   }
 
   if (log.length === renderedLogCount) return; // 새로 추가된 줄 없음
 
+  const startIdx = renderedLogCount;
   const newLines = log.slice(renderedLogCount);
+  const newEvents = events.slice(renderedEventCount);
   renderedLogCount = log.length;
+  renderedEventCount = events.length;
 
-  logTypingQueue.push(...newLines);
-  processLogQueue();
+  const sideMap = { [mineKey]: "mine", [enemyKey]: "enemy" };
+
+  newLines.forEach((text, i) => {
+    boardQueue.push({ kind: "log", text });
+
+    const absoluteIdx = startIdx + i;
+    for (const ev of newEvents) {
+      if (ev.logIndex !== absoluteIdx) continue;
+      const side = sideMap[ev.side];
+
+      if (ev.type === "hit") {
+        const finalPkmn = side === "mine" ? minePkmn : enemyPkmn;
+        const idx = side === "mine" ? mineIdx : enemyIdx;
+        boardQueue.push({ kind: "hit", side, pkmn: { ...finalPkmn, hp: ev.hp }, idx, hasAttacker: ev.hasAttacker });
+      } else if (ev.type === "switch") {
+        const finalPkmn = side === "mine" ? minePkmn : enemyPkmn;
+        boardQueue.push({ kind: "switch", side, pkmn: finalPkmn, idx: ev.idx });
+      }
+    }
+  });
+
+  processBoardQueue();
 }
 
 function renderTurn(room) {

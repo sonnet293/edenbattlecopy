@@ -502,8 +502,8 @@ async function useMove(moveIdx) {
         if (evaded) {
           log.push(`${defenderName}에게는 맞지 않았다!`);
         } else {
-          // 공격 랭크업/다운: 타입 상성 적용 "이전" 보정값으로, 1d10 굴림에만 곱해짐 (급소율에는 영향 없음)
-          // 방어 랭크업/다운: 최종 피해량 계산 이후 보정값으로, 방어력x3 항에만 곱해짐
+          // 공격 랭크업/다운: (위력 + 공격력x4 + 1d10) 전체에 곱해짐, 타입상성/자속 적용 "이전" 보정값 (급소율에는 영향 없음)
+          // 방어 랭크업/다운: 방어력x3 항에만 곱해짐
           const atkMult = rankMultiplier(getEffectiveRank(myRanks, "atk", currentTurn));
           const defMult = rankMultiplier(getEffectiveRank(oppRanks, "def", currentTurn));
 
@@ -514,9 +514,9 @@ async function useMove(moveIdx) {
 
           // 위력이 0인 기술(상태이상/랭크 변화 전용)은 데미지를 주지 않음
           if (moveData.power > 0) {
-            // 최종 피해량 = ((위력 + 공격력x4 + 1d10 x 공격랭크보정) x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
+            // 최종 피해량 = ((위력 + 공격력x4 + 1d10) x 공격랭크보정 x 타입상성 x 자속) - (방어력x3 x 방어랭크보정)
             const rawDamage =
-              (moveData.power + attacker.atk * 4 + rollD10() * atkMult) * typeMult * stab -
+              (moveData.power + attacker.atk * 4 + rollD10()) * atkMult * typeMult * stab -
               defender.def * 3 * defMult;
             const isCrit = rollCrit(attacker);
             const dmg = Math.max(0, Math.round(rawDamage * (isCrit ? 1.5 : 1)));

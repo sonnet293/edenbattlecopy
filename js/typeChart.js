@@ -26,10 +26,10 @@ const TYPE_CHART = {
 // 기술 타입 vs 방어 포켓몬 타입 → 배수 반환
 // 1.2(약점) / 0.8(저항) / 0(무효) / 1(통상)
 export function getTypeMultiplier(moveType, defenderType) {
-  if (!moveType || !defenderType) return 1
-  const row = TYPE_CHART[moveType]
-  if (!row) return 1
-  const val = row[defenderType]
-  if (val === undefined) return 1
-  return val
-}  
+  if (!moveType || !defenderType) return 1;
+  const row = TYPE_CHART[moveType];
+  if (!row) return 1;
+  const val = row[defenderType];
+  if (val === undefined) return 1;
+  return val;
+}

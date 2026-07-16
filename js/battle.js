@@ -8,12 +8,7 @@ import {
   updateDoc,
   onSnapshot,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-// 기대하는 모양:
-//   MOVES["화염바퀴"] = { power, type, accuracy, alwaysHit, effect: { chance, status?, volatile? },
-//                        rank?: { atk?, def?, spd?, targetAtk?, targetDef?, targetSpd?, turns, chance? } }
 import { MOVES } from "./moves.js";
-// 기대하는 모양: getTypeMultiplier(moveType, defenderType) -> 1.2 / 0.8 / 0 / 1
 import { getTypeMultiplier } from "./typeChart.js";
 import {
   applyStatus,
@@ -30,7 +25,6 @@ const isSpectatorView = new URLSearchParams(location.search).get("spectator") ==
 
 const MOVE_BUTTON_COUNT = 4;
 
-// 기술 타입별 버튼 배경색
 const TYPE_COLORS = {
   노말: "#949495", 불: "#e56c3e", 물: "#5185c5", 전기: "#fbb917", 풀: "#66a945",
   얼음: "#6dc8eb", 격투: "#e09c40", 독: "#735198", 땅: "#9c7743", 바위: "#bfb889",
@@ -38,10 +32,8 @@ const TYPE_COLORS = {
   드래곤: "#535ca8", 악: "#4c4948", 강철: "#69a9c7", 페어리: "#dab4d4",
 };
 
-// 랭크 -3 ~ +3 -> 배율 0.7 ~ 1.3 (공격/방어/회피 공통)
 const RANK_MULT_TABLE = [0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3];
 
-// leaveBattle()에서 전투 종료 후 다음 게임을 위해 되돌릴 필드들
 const BATTLE_RESET_FIELDS = {
   game_started: false,
   game_started_at: null,
@@ -66,13 +58,13 @@ const BATTLE_RESET_FIELDS = {
 };
 
 let myUid = null;
-let mySlot = null; // "player1" | "player2" | "spectator" | null
-let roundInitInFlight = false; // player1의 첫 주사위 굴리기 중복 방지용 가드
-let lastAnimatedRound = 0; // 마지막으로 다이스 애니메이션 재생한 round_no
-let isAnimating = false; // 다이스 굴리기 대기~재생 중 전체 (버튼 잠금용)
-let diceRolling = false; // playDiceRoll() 프라미스가 실제로 진행 중인지 (중복 시작 방지)
-let pendingDiceRoll = null; // 이전 라운드의 로그/연출 큐가 끝나길 기다리는 다이스 정보
-let actionInFlight = false; // useMove 처리 중 중복 클릭 방지용
+let mySlot = null; 
+let roundInitInFlight = false; 
+let lastAnimatedRound = 0; 
+let isAnimating = false; 
+let diceRolling = false; 
+let pendingDiceRoll = null; 
+let actionInFlight = false; 
 
 const DICE_SOUND_URL = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3";
 const diceSound = new Audio(DICE_SOUND_URL);
@@ -95,9 +87,6 @@ function displayName(key, room) {
   return key === "p1" ? (room.player1_name ?? "Player1") : (room.player2_name ?? "Player2");
 }
 
-// 화면에 항상 "아군(mine)/적군(enemy)"으로 보이도록, 접속한 사람 기준으로 p1/p2를 매핑.
-// player1로 접속한 사람도, player2로 접속한 사람도 각자 자기 쪽을 "mine"으로 보게 됨.
-// 관전자는 편의상 p1을 mine으로 고정.
 function perspectiveKeys() {
   const myKey = slotKey(mySlot);
   if (myKey === "p2") return { mineKey: "p2", enemyKey: "p1" };
@@ -127,11 +116,10 @@ function defaultRanks() {
   return {
     atk: { value: 0, expireTurn: 0 },
     def: { value: 0, expireTurn: 0 },
-    evasion: { value: 0, expireTurn: 0 }, // 속도(spd) 랭크는 회피율 보정으로만 쓰이므로 evasion 버킷에 저장
+    evasion: { value: 0, expireTurn: 0 }, 
   };
 }
 
-// moves.js의 rank 필드(atk/def/spd/targetAtk/targetDef/targetSpd) -> 내부 랭크 버킷/대상 매핑
 const RANK_FIELD_MAP = {
   atk: { self: true, stat: "atk" },
   def: { self: true, stat: "def" },
@@ -141,8 +129,6 @@ const RANK_FIELD_MAP = {
   targetSpd: { self: false, stat: "evasion" },
 };
 
-// 3턴(사용 시점 포함) 지나면 자동으로 0으로 풀림.
-// 갱신(재사용) 시에는 호출하는 쪽에서 expireTurn을 currentTurn+2로 다시 찍어서 3턴을 새로 시작시킴.
 function getEffectiveRank(ranks, stat, currentTurn) {
   const data = ranks?.[stat];
   if (!data) return 0;
@@ -203,7 +189,6 @@ function buildRankChangeMessage(name, statLabel, oldValue, newValue, wasIncrease
   return `${name}의 ${statLabel}${josa(statLabel, "이가")} ${-delta} 하락했다!`;
 }
 
-// spd + 1d10 비교로 선공 결정. 동점이면 다시 굴림. 굴린 다이스 값은 애니메이션용으로 같이 반환.
 function decideFirst(p1Active, p2Active) {
   let score1, score2, r1, r2;
   for (let i = 0; i < 20; i++) {
@@ -216,10 +201,6 @@ function decideFirst(p1Active, p2Active) {
   return { first: score1 > score2 ? "p1" : "p2", r1, r2 };
 }
 
-// 활성 포켓몬이 쓰러졌는지만 판단. 더 이상 자동으로 다음 포켓몬으로 넘기지 않고,
-// "교체가 필요한 상태(pending switch)"인지와 "전멸인지"만 알려줌.
-// 실제 교체(다음 포켓몬 선택)는 사용자가 벤치 버튼을 눌러야 switchPokemon()에서 처리됨.
-// 반환: { fainted, allFainted, name }
 function handleFaintSwitch(entries, sideKey, activeIdx) {
   const arr = entries[sideKey];
   const idx = activeIdx[sideKey];
@@ -231,27 +212,20 @@ function handleFaintSwitch(entries, sideKey, activeIdx) {
   return { fainted: true, allFainted: !hasAliveBench, name };
 }
 
-// 한 명(선공 or 후공)의 행동이 끝난 뒤 다음 단계를 계산.
-// alreadyPendingSides: 이번 액션에서 "직접 데미지"로 이미 교체 대기 처리된 쪽(들).
-//   - 이미 호출하는 쪽(useMove)에서 pending_switch 플래그와 로그를 다 찍었으므로
-//     여기서는 중복으로 다시 찍지 않고, 그냥 라운드 진행을 멈추기만 함.
-// entries/activeIdx를 직접 변경하며, log에 메시지를 push함.
 function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, events, alreadyPendingSides = new Set()) {
   const update = {};
 
   if (alreadyPendingSides.size > 0) {
-    // 즉발 데미지로 쓰러진 쪽이 있으면, 라운드 안 끝났어도 일단 멈추고 교체부터 받는다.
-    // (이 라운드의 도트 데미지 틱은 스킵하고 다음 라운드로 넘어가는 단순화된 처리)
+
     update.battle_turn = null;
     return update;
   }
 
   if (room.battle_turn === room.round_first) {
     update.battle_turn = room.battle_turn === "p1" ? "p2" : "p1";
-    return update; // 아직 이번 턴 안 끝남
+    return update; 
   }
 
-  // 후공까지 행동 끝남 -> 이번 턴 종료. 독/화상 틱 적용.
   for (const side of ["p1", "p2"]) {
     const pkmn = entries[side][activeIdx[side]];
     if (!pkmn) continue;
@@ -263,7 +237,6 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
     }
   }
 
-  // 틱 데미지로 쓰러졌는지 체크
   let winner = null;
   let needsSwitch = false;
   for (const side of ["p1", "p2"]) {
@@ -277,7 +250,7 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
     } else {
       update[`${side}_pending_switch`] = true;
       needsSwitch = true;
-      log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다! ${displayName(side, room)}, 교체할 포켓몬을 선택해줘`);
+      log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다!`);
     }
   }
 
@@ -287,7 +260,7 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
   }
 
   if (needsSwitch) {
-    update.battle_turn = null; // 교체부터 받고 다음 라운드로
+    update.battle_turn = null; 
     return update;
   }
 
@@ -300,7 +273,7 @@ function buildTurnAdvanceUpdate(room, entries, activeIdx, currentTurn, log, even
   update.p1_roll = r1;
   update.p2_roll = r2;
   const firstPkmnName = (first === "p1" ? p1Active : p2Active)?.name ?? "포켓몬";
-  log.push(`다음 턴! ${firstPkmnName}의 선공!`);
+  log.push(`${firstPkmnName}의 선공!`);
 
   return update;
 }
@@ -327,7 +300,7 @@ function listenBattle() {
     if (isNewRound) {
       if (!isAnimating) {
         isAnimating = true;
-        renderTurnUI(room); // 버튼들 잠그기
+        renderTurnUI(room); 
       }
       // 이전 라운드의 로그/연출 큐가 다 끝난 뒤에 굴리도록 일단 대기시켜둠
       const { mineKey, enemyKey } = perspectiveKeys();
@@ -348,7 +321,7 @@ function tryStartPendingDiceRoll() {
   const { roundNo, mineRoll, enemyRoll, room } = pendingDiceRoll;
   pendingDiceRoll = null;
   diceRolling = true;
-  document.getElementById("turn-indicator").innerText = "주사위 굴리는 중...";
+  // document.getElementById("turn-indicator").innerText = "주사위 굴리는 중...";
   playDiceRoll(mineRoll, enemyRoll).then(() => {
     diceRolling = false;
     isAnimating = false;
@@ -483,7 +456,7 @@ async function useMove(moveIdx) {
           return;
         }
         update[`${myKey}_pending_switch`] = true;
-        log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다! ${displayName(myKey, room)}, 교체할 포켓몬을 선택해줘`);
+        log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다!`);
         directPendingSide = myKey;
       }
     } else {
@@ -527,9 +500,9 @@ async function useMove(moveIdx) {
 
             if (isCrit && dmg > 0) log.push("급소에 맞았다!");
 
-            if (typeMult === 0) log.push(`${defenderName}에게는 효과가 없다…`);
+            if (typeMult === 0) log.push(`${defenderName}에게는 효과가 없는 듯하다...`);
             else if (typeMult > 1) log.push("효과가 굉장했다!");
-            else if (typeMult < 1) log.push("효과가 별로인 듯하다…");
+            else if (typeMult < 1) log.push("효과가 별로인 듯하다...");
           }
 
           // 상태이상 / 상태변화 부여 시도
@@ -545,7 +518,7 @@ async function useMove(moveIdx) {
                 log.push(`${dn}${josa(dn, "은는")} 이미 ${volName} 상태다!`);
               } else {
                 updatedDefender = applyVolatile(updatedDefender, volName);
-                log.push(`${dn}${josa(dn, "이가")} ${volName} 상태가 되었다!`);
+                log.push(`${dn}${josa(dn, "은는")} ${volName} 상태가 되었다!`);
               }
             }
           }
@@ -589,7 +562,7 @@ async function useMove(moveIdx) {
               return;
             }
             update[`${oppKey}_pending_switch`] = true;
-            log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다! ${displayName(oppKey, room)}, 교체할 포켓몬을 선택해줘`);
+            log.push(`${faint.name}${josa(faint.name, "은는")} 쓰러졌다!`);
             directPendingSide = oppKey;
           }
         }
@@ -672,7 +645,7 @@ async function switchPokemon(targetIdx) {
       update.p1_roll = r1;
       update.p2_roll = r2;
       const firstPkmnName = (first === "p1" ? p1Active : p2Active)?.name ?? "포켓몬";
-      log.push(`다음 턴! ${firstPkmnName}의 선공!`);
+      log.push(`${firstPkmnName}의 선공!`);
     }
 
     update.battle_log = log;
@@ -750,8 +723,8 @@ function renderBoard(room) {
   const { mineKey, enemyKey } = perspectiveKeys();
   const myKey = slotKey(mySlot);
 
-  const mineLabel = myKey ? `아군 (${displayName(mineKey, room)})` : displayName(mineKey, room);
-  const enemyLabel = myKey ? `적군 (${displayName(enemyKey, room)})` : displayName(enemyKey, room);
+  const mineLabel = myKey ? `${displayName(mineKey, room)}` : displayName(mineKey, room);
+  const enemyLabel = myKey ? `${displayName(enemyKey, room)}` : displayName(enemyKey, room);
 
   document.getElementById("mine-name").innerText = mineLabel;
   document.getElementById("enemy-name").innerText = enemyLabel;
@@ -921,35 +894,27 @@ function renderBenchSide(dataKey, uiKey, room) {
   entry.forEach((pkmn, idx) => {
     if (!pkmn) return;
 
-    const isFainted = pkmn.hp <= 0;
     const isActive = idx === activeIdx && !pendingSwitch;
-    const usable = (canForcedSwitch || canVoluntarySwitch) && !isFainted && !isActive;
+    if (isActive) return; // 이미 출전 중인 포켓몬은 벤치에 버튼을 표시하지 않음
+
+    const isFainted = pkmn.hp <= 0;
+    const usable = (canForcedSwitch || canVoluntarySwitch) && !isFainted;
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "bench-btn";
     btn.disabled = !usable;
-    btn.style.opacity = usable ? "1" : "0.45";
-    btn.style.display = "inline-flex";
-    btn.style.alignItems = "center";
-    btn.style.gap = "4px";
-    if (isActive) btn.classList.add("active");
     if (isFainted) btn.classList.add("fainted");
 
-    if (pkmn.portrait) {
-      const img = document.createElement("img");
-      img.src = pkmn.portrait;
-      img.alt = pkmn.name ?? "";
-      img.className = "bench-portrait";
-      img.style.width = "24px";
-      img.style.height = "24px";
-      if (isFainted) img.style.opacity = "0.4";
-      btn.appendChild(img);
-    }
+    const name = document.createElement("span");
+    name.className = "bench-name";
+    name.textContent = formatPokemonName(pkmn);
+    btn.appendChild(name);
 
-    const label = document.createElement("span");
-    label.textContent = `${formatPokemonName(pkmn)} (${pkmn.hp}/${pkmn.maxHp})${isActive ? " - 출전 중" : ""}`;
-    btn.appendChild(label);
+    const hp = document.createElement("span");
+    hp.className = "bench-hp";
+    hp.textContent = `${pkmn.hp}/${pkmn.maxHp}`;
+    btn.appendChild(hp);
 
     btn.onclick = () => {
       playButtonSound();
@@ -958,7 +923,6 @@ function renderBenchSide(dataKey, uiKey, room) {
     container.appendChild(btn);
   });
 
-  // 벤치 버튼은 항상 표시. 내 턴일 때만(canForcedSwitch/canVoluntarySwitch) 눌리도록 usable로 이미 제어됨.
   container.style.display = "flex";
 }
 

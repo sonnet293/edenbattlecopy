@@ -132,3 +132,56 @@
 #battle-wrapper.screen-shake {
   animation: screenShake 0.3s ease;
 }
+
+/* 벤치 교체 버튼 - 몬스터볼 배경, 평소엔 흐리게 / 호버 시 선명하게 */
+.bench-btn {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  padding: 4px;
+  border: none;
+  border-radius: 10px;
+  background-color: transparent;
+  background-image: url("../img/몬스터볼.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.35;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.bench-btn:hover {
+  opacity: 1;
+}
+
+.bench-btn:disabled {
+  cursor: default;
+}
+
+.bench-btn.fainted {
+  filter: grayscale(1);
+}
+
+.bench-name {
+  max-width: 100%;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 1px 2px #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bench-hp {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 1px 2px #000;
+}

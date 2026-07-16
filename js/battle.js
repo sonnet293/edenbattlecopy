@@ -811,7 +811,7 @@ function applyPokemonVisual(side, pkmn, idx) {
   }
 
   updateHpBar(`${side}-hp-bar`, `${side}-hp`, pkmn.hp, pkmn.maxHp, true);
-  stats.innerText = `${formatPokemonName(pkmn)}  ATK ${pkmn.atk}  DEF ${pkmn.def}  SPD ${pkmn.spd}`;
+  stats.innerText = formatPokemonName(pkmn);
 
   const portrait = document.getElementById(`${side}-portrait`);
   if (portrait) portrait.classList.toggle("fainted", pkmn.hp <= 0);
@@ -890,6 +890,8 @@ function renderBenchSide(dataKey, uiKey, room) {
   container.innerHTML = "";
   container.style.flexWrap = "wrap";
   container.style.gap = "6px";
+
+  if (myKey !== dataKey) return; // 상대 벤치는 아예 표시하지 않음
 
   entry.forEach((pkmn, idx) => {
     if (!pkmn) return;

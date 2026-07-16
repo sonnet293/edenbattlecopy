@@ -1103,7 +1103,7 @@ function renderTurn(room) {
   if (pendingSides.length > 0) {
     const myKey = slotKey(mySlot);
     if (myKey && pendingSides.includes(myKey)) {
-      el.innerText = "교체할 포켓몬을 선택해줘!";
+      el.innerText = "교체할 포켓몬을 선택!";
     } else {
       el.innerText = `${pendingSides.map((s) => displayName(s, room)).join(", ")} 교체 대기 중...`;
     }

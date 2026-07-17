@@ -63,8 +63,9 @@ let roundInitInFlight = false;
 let lastAnimatedRound = 0; 
 let isAnimating = false; 
 let diceRolling = false; 
-let pendingDiceRoll = null; 
-let actionInFlight = false; 
+let pendingDiceRoll = null;
+let actionInFlight = false;
+let pendingFirstMoveLog = null; // 다이스 롤이 끝난 뒤에야 재생할 "~의 선공!" 로그 줄
 
 const DICE_SOUND_URL = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3";
 const diceSound = new Audio(DICE_SOUND_URL);
@@ -291,11 +292,11 @@ function listenBattle() {
 
     mySlot = isSpectatorView ? "spectator" : calcMySlot(room);
 
-    renderBoard(room);
-    maybeInitRound(room);
-
     const roundNo = room.round_no ?? 0;
     const isNewRound = !!room.battle_turn && roundNo !== lastAnimatedRound;
+
+    renderBoard(room, isNewRound);
+    maybeInitRound(room);
 
     if (isNewRound) {
       if (!isAnimating) {
@@ -327,7 +328,17 @@ function tryStartPendingDiceRoll() {
     isAnimating = false;
     lastAnimatedRound = roundNo;
     afterDiceSettled(room);
+    flushPendingFirstMoveLog();
   });
+}
+
+// 다이스 결과가 확정된 뒤에야 보류해뒀던 "~의 선공!" 로그 줄을 재생
+function flushPendingFirstMoveLog() {
+  if (!pendingFirstMoveLog) return;
+  const { text } = pendingFirstMoveLog;
+  pendingFirstMoveLog = null;
+  boardQueue.push({ kind: "log", text });
+  processBoardQueue();
 }
 
 // 다이스(선공 결정)가 끝난 뒤 화면을 갱신
@@ -719,7 +730,7 @@ function renderLeaveButton(room) {
   };
 }
 
-function renderBoard(room) {
+function renderBoard(room, isNewRound = false) {
   const { mineKey, enemyKey } = perspectiveKeys();
   const myKey = slotKey(mySlot);
 
@@ -731,7 +742,7 @@ function renderBoard(room) {
   document.getElementById("dice-mine-name").innerText = mineLabel;
   document.getElementById("dice-enemy-name").innerText = enemyLabel;
 
-  renderLogAndBoard(room);
+  renderLogAndBoard(room, isNewRound);
   renderResult(room);
   renderLeaveButton(room);
 }
@@ -1020,7 +1031,7 @@ function processBoardQueue() {
 
 // room 스냅샷 -> 로그/연출 재생 큐 구성. 최초 렌더는 즉시 전부 표시하고,
 // 그 이후엔 새로 추가된 줄만 한 줄씩, 해당 줄에 달린 연출과 함께 순서대로 재생한다.
-function renderLogAndBoard(room) {
+function renderLogAndBoard(room, isNewRound = false) {
   const el = document.getElementById("battle-log");
   if (!el) return;
 
@@ -1035,6 +1046,7 @@ function renderLogAndBoard(room) {
     boardInitialized = false;
     boardQueue = [];
     boardBusy = false;
+    pendingFirstMoveLog = null;
   }
 
   const { mineKey, enemyKey } = perspectiveKeys();
@@ -1045,11 +1057,15 @@ function renderLogAndBoard(room) {
 
   if (!boardInitialized) {
     // 최초 렌더링(또는 재접속)은 기존 로그/보드를 연출 없이 즉시 표시
+    const holdLast = isNewRound && log.length > 0;
+    const visibleLog = holdLast ? log.slice(0, -1) : log;
+
     el.innerHTML = "";
-    log.slice(-LOG_MAX_LINES).forEach((line) => appendLogLineInstant(el, line));
+    visibleLog.slice(-LOG_MAX_LINES).forEach((line) => appendLogLineInstant(el, line));
     el.scrollTop = el.scrollHeight;
     renderedLogCount = log.length;
     renderedEventCount = events.length;
+    if (holdLast) pendingFirstMoveLog = { text: log[log.length - 1] };
 
     applyPokemonVisual("mine", minePkmn, mineIdx);
     updatePortrait("mine", minePkmn, false);
@@ -1070,7 +1086,11 @@ function renderLogAndBoard(room) {
 
   const sideMap = { [mineKey]: "mine", [enemyKey]: "enemy" };
 
-  newLines.forEach((text, i) => {
+  // 새 라운드가 시작된 경우, 마지막 줄(항상 "~의 선공!")은 다이스 연출이 끝난 뒤에 재생하도록 보류
+  const holdLastLine = isNewRound && newLines.length > 0;
+  const linesToQueue = holdLastLine ? newLines.slice(0, -1) : newLines;
+
+  linesToQueue.forEach((text, i) => {
     boardQueue.push({ kind: "log", text });
 
     const absoluteIdx = startIdx + i;
@@ -1088,6 +1108,10 @@ function renderLogAndBoard(room) {
       }
     }
   });
+
+  if (holdLastLine) {
+    pendingFirstMoveLog = { text: newLines[newLines.length - 1] };
+  }
 
   processBoardQueue();
 }

@@ -1095,7 +1095,7 @@ function renderLogAndBoard(room) {
 function renderTurn(room) {
   const el = document.getElementById("turn-indicator");
   if (room.battle_winner) {
-    el.innerText = "전투 종료";
+    el.innerText = "배틀 종료";
     return;
   }
 

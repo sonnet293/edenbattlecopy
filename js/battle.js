@@ -858,10 +858,11 @@ function renderMoveButtons(room) {
     const usable = canAct && (move.pp ?? 0) > 0;
 
     const moveData = MOVES[move.name];
-    btn.style.display = "inline-block";
+    btn.style.display = "inline-flex";
     btn.style.backgroundColor = TYPE_COLORS[moveData?.type] ?? "var(--accent)";
     btn.style.opacity = usable ? "1" : "0.45";
-    btn.textContent = `${move.name} (PP ${move.pp})`;
+    const accText = moveData?.alwaysHit ? "필중" : `${moveData?.accuracy ?? "-"}%`;
+    btn.innerHTML = `<span class="move-btn-name">${move.name}</span><span class="move-btn-info">PP ${move.pp} | ${accText}</span>`;
     btn.disabled = !usable;
     btn.onclick = () => {
       playButtonSound();

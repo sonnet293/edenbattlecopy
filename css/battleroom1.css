@@ -1,234 +1,281 @@
-/* 포켓몬 패널 (적군/아군) */
-.pokemon-pannel,
+@import url('https://cdn.jsdelivr.net/gh/MonadABXY/mona-font/web/mona.css');
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+}
+
+body {
+    background: url(../img/골목.jpg) center / cover no-repeat;
+    font-family: "Mona12", sans-serif;
+    height: auto;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.main {
+    background: #fff;
+    width: 960px;
+    max-width: 98vw;
+    padding: 18px;
+    box-sizing: border-box;
+    border: 1px solid #444;
+    border-radius: 12px;
+}
+
+.battle-top {
+    display: flex;
+    width: 100%;
+}
+
+.mine-col {
+    flex: 0 0 40%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.turn-info {
+    flex: 0 0 20%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.opp-col {
+    flex: 0 0 40%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: right;
+}
+
+.mine-col,
+.turn-info,
+.opp-col {
+    min-width: 0;
+}
+
 .pokemon-panel {
-  width: 100%;
-  max-width: 240px;
-  padding: 7px 14px 8px;
-  box-sizing: border-box;
-  border: 1.5px solid #555;
-  border-radius: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  background: rgba(255, 255, 255, 0.04);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #eee;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 58%;
-}
-
-.hp-text {
-  font-size: 11px;
-  color: #ccc;
-  white-space: nowrap;
-}
-
-/* HP바 */
-.hp-bar-bg {
-  width: 100%;
-  background: rgba(0, 0, 0, 0.25);
-  border-radius: 999px;
-  height: 8px;
-  overflow: hidden;
-}
-
-.hp-bar {
-  height: 100%;
-  width: 100%;
-  background: #4caf50; /* 초록: 평상시 (updateHpBar가 실시간으로 색을 바꿈) */
-  border-radius: 999px;
-  transition: width 0.5s ease, background-color 0.4s ease;
+.opp-col .pokemon-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
 }
 
 /* 포트레이트 */
+.portrait-wrap {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    flex-shrink: 0;
+}
+
+.portrait-placeholder {
+    position: absolute;
+    inset: 0;
+    background: #282B42;
+    border-radius: 5px;
+}
+
 .portrait-img {
-  display: none;
-  max-width: 100%;
-  opacity: 0;
-  transition: opacity 0.3s ease;
+    position: absolute;
+    display: none;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 5px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
 }
 
 .portrait-img.visible {
-  opacity: 1;
+    opacity: 1;
 }
 
-.portrait-img.visible.fainted {
-  opacity: 0.35;
+/* TODO: 피격 애니메이션 삽입 */
+
+/* HP 카드 */
+.hp-card {
+    width: 100%;
+    max-width: 240px;
+    padding: 7px 14px 8px;
+    box-sizing: border-box;
+    border: 1.5px solid #555;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    background: rgba(255,255,255,0.04);
 }
 
-@keyframes slideInMine {
-  from { transform: translateX(40px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+.hp-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
 }
 
-@keyframes slideInEnemy {
-  from { transform: translateX(-40px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+.hp-bar-bg {
+    width: 100%;
+    background: rgba(0,0,0,0.25);
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
 }
 
-.portrait-img.slide-in-mine {
-  animation: slideInMine 0.4s ease;
+.hp-bar {
+    height: 100%;
+    width: 100%;
+    background: #4caf50;
+    border-radius: 999px;
+    transition: width 0.5s ease, background-color 0.4s ease;
 }
 
-.portrait-img.slide-in-enemy {
-  animation: slideInEnemy 0.4s ease;
+.battle-middle {
+    display: grid;
+    grid-template-columns: 32% 18% 50%;
+    height: 100%;
+    margin-top: 10px;
 }
 
-/* 전투 연출 */
-@keyframes attackerFlash {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(1.8); }
+.my-section {
+    grid-column: 1;
 }
 
-@keyframes defenderHit {
-  0% { transform: translateX(0); }
-  25% { transform: translateX(-6px); }
-  50% { transform: translateX(6px); }
-  75% { transform: translateX(-3px); }
-  100% { transform: translateX(0); }
+/* TODO: 스크롤바 디자인 */
+#battle-log {
+    grid-column: 3;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 14px;
+    overflow-y: auto;
+    height: 120px;
+    line-height: 1.5;
 }
 
-@keyframes screenShake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-4px); }
-  40% { transform: translateX(4px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(3px); }
-}
-
-@keyframes blinkDamage {
-  0%, 100% { opacity: 1; }
-  25%, 75% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-
-.pokemon-pannel.attacker-flash,
-.pokemon-panel.attacker-flash {
-  animation: attackerFlash 0.25s ease;
-}
-
-.pokemon-pannel.defender-hit,
-.pokemon-panel.defender-hit {
-  animation: defenderHit 0.3s ease;
-}
-
-.pokemon-pannel.blink-damage,
-.pokemon-panel.blink-damage {
-  animation: blinkDamage 0.4s ease;
-}
-
-#battle-wrapper.screen-shake {
-  animation: screenShake 0.3s ease;
-}
-
-/* 벤치 교체 버튼 - 몬스터볼 배경, 평소엔 흐리게 / 호버 시 선명하게 */
-.bench-btn {
-  position: relative;
-  width: 72px;
-  height: 72px;
-  padding: 4px;
-  border: none;
-  border-radius: 10px;
-  background-color: transparent;
-  background-image: url("../img/몬스터볼.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  opacity: 0.35;
-  cursor: pointer;
-  transition: opacity 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  overflow: hidden;
-}
-
-.bench-btn:hover {
-  opacity: 1;
-}
-
-.bench-btn:disabled {
-  cursor: default;
-}
-
-.bench-btn.fainted {
-  filter: grayscale(1);
-}
-
-.bench-name {
-  max-width: 100%;
-  font-size: 11px;
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 0 0 3px #000, 0 1px 2px #000;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bench-hp {
-  font-size: 10px;
-  font-weight: 600;
-  color: #fff;
-  text-shadow: 0 0 3px #000, 0 1px 2px #000;
-}
-
-/* 기술 버튼 - 글자 수와 무관하게 항상 같은 크기, 기술명/PP·명중률 2줄로 표시 */
+/* 기술 버튼 */
 .move-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    width: 100%;
 }
 
 .move-btn {
-  width: 150px;
-  height: 52px;
-  box-sizing: border-box;
-  padding: 4px 6px;
-  border: none;
-  border-radius: 8px;
-  color: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  overflow: hidden;
+    position: relative;
+    width: 150px;
+    height: 50px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: none;
+    color: white;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+    transition: filter 0.15s ease, transform 0.1s ease;
 }
 
-.move-btn:disabled {
-  cursor: default;
+.move-btn::after {
+    content: "";
+    position: absolute;
+    inset: 2px;
+    border: 2px solid white;
+    border-radius: inherit;
+    pointer-events: none;
 }
 
 .move-btn-name {
-  max-width: 100%;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+    max-width: 100%;
+    font-size: 13px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 .move-btn-info {
-  max-width: 100%;
-  font-size: 10px;
-  font-weight: 500;
-  opacity: 0.9;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+    max-width: 100%;
+    font-size: 10px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.move-btn:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.move-btn:not(:disabled):hover {
+    filter: brightness(1.1);
+    transform: scale(1.05);
+}
+
+.move-btn:not(:disabled):active {
+    filter: brightness(0.9);
+    transform: scale(0.97);
+}
+
+.bench-btn {
+    position: relative;
+    background-image: url(../img/몬스터볼.png);
+    background-color: transparent;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0.35;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+    color: #fff;
+    font-family: inherit;
+    width: 72px;
+    height: 72px;
+    padding: 4px;
+    border: none;
+    border-radius: 10px;
+}
+
+.bench-btn:hover {
+    opacity: 1;
+}
+
+.bench-btn:disabled {
+    cursor: default;
+}
+
+.bench-btn.fainted {
+    filter: grayscale(1);
+}
+
+.bench-name {
+    max-width: 100%;
+    font-size: 11px;
+    font-weight: 600;
+    text-shadow: 0 0 3px #000, 0 1px 2px #000;
+    white-space: nowrap;
+}
+
+.bench-hp {
+    font-size: 9px;
+    font-weight: 600;
+    text-shadow: 0 0 3px #000, 0 1px 2px #000;
 }

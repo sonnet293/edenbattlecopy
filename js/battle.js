@@ -150,7 +150,7 @@ function hasStab(attackerTypes, moveType) {
 
 // 회피율(%) = 5 * (방어자 spd - 공격자 spd), 0~10% 범위로 clamp
 function calcBaseEvasionPercent(attackerSpd, defenderSpd) {
-  return Math.max(0, Math.min(10, 5 * (defenderSpd - attackerSpd)));
+  return Math.max(0, Math.min(18, 5 * (defenderSpd - attackerSpd)));
 }
 
 // 명중 판정 (기술 자체의 명중률만 사용). 실패하면 "빗나갔다" - 공격자 쪽 귀책.

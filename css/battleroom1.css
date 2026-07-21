@@ -254,7 +254,7 @@ body {
     border-radius: 10px;
 }
 
-.bench-btn:hover {
+.bench-btn:not(:disabled):hover {
     opacity: 1;
 }
 
